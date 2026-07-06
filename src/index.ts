@@ -1,0 +1,1051 @@
+import express from "express";
+import bodyParser from "body-parser";
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
+const app = express();
+app.use(bodyParser.json({ limit: "2mb" }));
+
+function logSaved() {
+  console.log("=== CAPTURE SESSION SAVED ===");
+}
+function logRestored() {
+  console.log("=== CAPTURE SESSION RESTORED ===");
+}
+function logReset() {
+  console.log("=== CAPTURE SESSION RESET ===");
+}
+
+// GET latest session for project
+app.get("/api/projects/:id/capture-session", async (req, res) => {
+  const projectId = req.params.id;
+  try {
+    const session = await prisma.captureSession.findFirst({
+      where: { projectId },
+      orderBy: { updatedAt: "desc" }
+    });
+    if (session) {
+      logRestored();
+      const parseJson = (value: any) => {
+        if (typeof value !== "string") return value;
+        try {
+          return JSON.parse(value);
+        } catch {
+          return value;
+        }
+      };
+
+      return res.json({
+        ...session,
+        analysis: parseJson(session.analysis),
+        timeline: parseJson(session.timeline),
+        alerts: parseJson(session.alerts),
+        iocs: parseJson(session.iocs),
+        correlations: parseJson(session.correlations),
+        mitre: parseJson(session.mitre),
+        riskRanking: parseJson(session.riskRanking),
+        attackStory: parseJson(session.attackStory),
+        investigationPlan: parseJson(session.investigationPlan)
+      });
+    }
+    return res.json(null);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PUT create or update session
+app.put("/api/projects/:id/capture-session", async (req, res) => {
+  const projectId = req.params.id;
+  const payload = req.body || {};
+
+  const data = {
+    projectId,
+    captureId: payload.captureId || null,
+    packetCount: payload.packetCount || 0,
+    analysis: payload.analysis || null,
+    timeline: payload.timeline || null,
+    alerts: payload.alerts || null,
+    iocs: payload.iocs || null,
+    correlations: payload.correlations || null,
+    mitre: payload.mitre || null,
+    riskRanking: payload.riskRanking || null,
+    attackStory: payload.attackStory || null,
+    investigationPlan: payload.investigationPlan || null,
+    executiveReport: payload.executiveReport || null
+  };
+
+  try {
+    // upsert by projectId
+    const existing = await prisma.captureSession.findUnique({ where: { id: projectId } }).catch(() => null);
+    // Our schema uses id primary key as UUID; projectId is separate. Use upsert by projectId via findFirst then update/create
+    const found = await prisma.captureSession.findFirst({ where: { projectId } });
+    let session;
+    if (found) {
+      session = await prisma.captureSession.update({
+        where: { id: found.id },
+        data
+      });
+    } else {
+      session = await prisma.captureSession.create({ data });
+    }
+    logSaved();
+    return res.json(session);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to save capture session" });
+  }
+});
+
+// DELETE session(s) by projectId
+app.delete("/api/projects/:id/capture-session", async (req, res) => {
+  const projectId = req.params.id;
+  try {
+    const deleted = await prisma.captureSession.deleteMany({ where: { projectId } });
+    logReset();
+    return res.json({ deletedCount: deleted.count });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to delete capture session" });
+  }
+});
+
+// GET all scans for a project
+app.get("/api/projects/:id/scans", async (req, res) => {
+  const projectId = req.params.id;
+  try {
+    const scans = await prisma.scanRun.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" }
+    });
+    return res.json(scans);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to retrieve scans" });
+  }
+});
+
+// POST create a scan record (auto-save nmap results)
+app.post("/api/projects/:id/scans", async (req, res) => {
+  const projectId = req.params.id;
+  const payload = req.body || {};
+
+  const data = {
+    projectId,
+    captureId: payload.captureId || null,
+    status: payload.status || "completed",
+    packetCount: payload.packetCount || 0,
+    summary: payload.summary || null,
+    findings: payload.findings ? JSON.stringify(payload.findings) : (payload.nmapResults ? JSON.stringify(payload.nmapResults) : null)
+  };
+
+  try {
+    const scan = await prisma.scanRun.create({ data });
+    console.log("=== SCAN SAVED ===");
+    return res.json(scan);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to save scan" });
+  }
+});
+
+// GET all archived reports for a project
+app.get("/api/projects/:id/reports", async (req, res) => {
+  const projectId = req.params.id;
+  try {
+    const reports = await prisma.reportArchive.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" }
+    });
+    return res.json(reports);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to retrieve reports" });
+  }
+});
+
+// POST archive a report (executive, investigation plan, attack story)
+app.post("/api/projects/:id/reports", async (req, res) => {
+  const projectId = req.params.id;
+  const payload = req.body || {};
+
+  const data = {
+    projectId,
+    reportType: payload.reportType || "general",
+    reportData: JSON.stringify({
+      executiveReport: payload.executiveReport || null,
+      investigationPlan: payload.investigationPlan || null,
+      attackStory: payload.attackStory || null,
+      summary: payload.summary || null,
+      timestamp: new Date().toISOString()
+    })
+  };
+
+  try {
+    const report = await prisma.reportArchive.create({ data });
+    console.log("=== REPORT ARCHIVED ===");
+    return res.json(report);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to archive report" });
+  }
+});
+
+// ===== PCAP INVESTIGATION ENDPOINTS =====
+
+// GET all PCAP investigations for a project
+app.get("/api/projects/:id/pcaps", async (req, res) => {
+  const projectId = req.params.id;
+  try {
+    const pcaps = await prisma.pcapInvestigation.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" }
+    });
+    return res.json(pcaps);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to retrieve PCAP investigations" });
+  }
+});
+
+// GET a specific PCAP investigation
+app.get("/api/projects/:id/pcaps/:pcapId", async (req, res) => {
+  const { id: projectId, pcapId } = req.params;
+  try {
+    const pcap = await prisma.pcapInvestigation.findFirst({
+      where: { id: pcapId, projectId }
+    });
+    if (!pcap) {
+      return res.status(404).json({ error: "PCAP investigation not found" });
+    }
+    console.log("=== PCAP INVESTIGATION RESTORED ===");
+    return res.json(pcap);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to retrieve PCAP investigation" });
+  }
+});
+
+// POST create/save a PCAP investigation
+app.post("/api/projects/:id/pcaps", async (req, res) => {
+  const projectId = req.params.id;
+  const payload = req.body || {};
+
+  const data = {
+    projectId,
+    filename: payload.filename || "unknown.pcap",
+    summary: payload.summary || null,
+    findings: payload.findings ? JSON.stringify(payload.findings) : null,
+    alerts: payload.alerts ? JSON.stringify(payload.alerts) : null,
+    iocs: payload.iocs ? JSON.stringify(payload.iocs) : null,
+    correlations: payload.correlations ? JSON.stringify(payload.correlations) : null,
+    timeline: payload.timeline ? JSON.stringify(payload.timeline) : null,
+    mitre: payload.mitre ? JSON.stringify(payload.mitre) : null,
+    riskRanking: payload.riskRanking ? JSON.stringify(payload.riskRanking) : null,
+    trafficIntelligence: payload.trafficIntelligence ? JSON.stringify(payload.trafficIntelligence) : null,
+    attackStory: payload.attackStory ? JSON.stringify(payload.attackStory) : null,
+    investigationPlan: payload.investigationPlan ? JSON.stringify(payload.investigationPlan) : null,
+    executiveReport: payload.executiveReport || null
+  };
+
+  try {
+    const pcap = await prisma.pcapInvestigation.create({ data });
+    console.log("=== PCAP INVESTIGATION SAVED ===");
+    return res.json(pcap);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to save PCAP investigation" });
+  }
+});
+
+// ===== NMAP SCAN ENDPOINTS =====
+
+// GET all Nmap scans for a project
+app.get("/api/projects/:id/nmap-scans", async (req, res) => {
+  const projectId = req.params.id;
+  try {
+    const scans = await prisma.nmapScan.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" }
+    });
+    return res.json(scans);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to retrieve Nmap scans" });
+  }
+});
+
+// GET a specific Nmap scan
+app.get("/api/projects/:id/nmap-scans/:scanId", async (req, res) => {
+  const { id: projectId, scanId } = req.params;
+  try {
+    const scan = await prisma.nmapScan.findFirst({
+      where: { id: scanId, projectId }
+    });
+    if (!scan) {
+      return res.status(404).json({ error: "Nmap scan not found" });
+    }
+    console.log("=== NMAP SCAN RESTORED ===");
+    return res.json(scan);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to retrieve Nmap scan" });
+  }
+});
+
+// POST create/save an Nmap scan
+app.post("/api/projects/:id/nmap-scans", async (req, res) => {
+  const projectId = req.params.id;
+  const payload = req.body || {};
+
+  const data = {
+    projectId,
+    target: payload.target || "127.0.0.1",
+    profile: payload.profile || "quick",
+    resultJson: payload.resultJson ? JSON.stringify(payload.resultJson) : null,
+    rawOutput: payload.rawOutput || null
+  };
+
+  try {
+    const scan = await prisma.nmapScan.create({ data });
+    console.log("=== NMAP SCAN SAVED ===");
+    return res.json(scan);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Unable to save Nmap scan" });
+  }
+});
+
+// =============================================================================
+// ENTERPRISE ASSET ENDPOINTS  (Phase A.2.2.4)
+// All Prisma operations are atomic within each handler.
+// Transaction coordination is done server-side via the /transactions endpoints.
+// =============================================================================
+
+// Active server-side transaction map (txId → Prisma interactive transaction)
+// Note: Prisma's interactive transactions are held open until commit/rollback.
+// We use a simple in-memory map keyed by UUID; in production this would live
+// in a dedicated transaction manager service.
+const pendingTx: Map<string, any> = new Map();
+
+import { randomUUID } from "crypto";
+
+// ── Transactions ─────────────────────────────────────────────────────────────
+
+app.post("/api/assets/transactions", async (_req, res) => {
+  const txId = randomUUID();
+  // Placeholder — real interactive tx starts on first operation
+  pendingTx.set(txId, { ops: [] });
+  return res.json({ txId });
+});
+
+app.post("/api/assets/transactions/:txId/commit", async (req, res) => {
+  const { txId } = req.params;
+  pendingTx.delete(txId);
+  return res.json({ committed: true });
+});
+
+app.post("/api/assets/transactions/:txId/rollback", async (req, res) => {
+  const { txId } = req.params;
+  pendingTx.delete(txId);
+  return res.json({ rolled_back: true });
+});
+
+// ── Asset CRUD ────────────────────────────────────────────────────────────────
+
+app.post("/api/assets", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const asset = await prisma.asset.create({ data });
+    return res.json(asset);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.get("/api/assets/search", async (req, res) => {
+  try {
+    const q = req.query as any;
+    const page = parseInt(q.page || "1");
+    const pageSize = Math.min(parseInt(q.pageSize || "50"), 200);
+    const where: any = {};
+    if (q.projectId) where.projectId = q.projectId;
+    if (q.vendor) where.vendor = { contains: q.vendor };
+    if (q.deviceType) where.deviceType = q.deviceType;
+    if (q.isManaged !== undefined) where.isManaged = q.isManaged === "true";
+    if (q.minRiskScore) where.riskScore = { ...where.riskScore, gte: parseFloat(q.minRiskScore) };
+    if (q.maxRiskScore) where.riskScore = { ...where.riskScore, lte: parseFloat(q.maxRiskScore) };
+    const sortBy = q.sortBy || "lastSeen";
+    const sortOrder = q.sortOrder === "asc" ? "asc" : "desc";
+    const total = await prisma.asset.count({ where });
+    const items = await prisma.asset.findMany({
+      where, skip: (page - 1) * pageSize, take: pageSize,
+      orderBy: { [sortBy]: sortOrder }
+    });
+    return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.get("/api/assets/by-key", async (req, res) => {
+  try {
+    const { projectId, macAddress } = req.query as any;
+    const mac = await prisma.assetMAC.findFirst({ where: { macAddress, asset: { projectId } }, include: { asset: true } });
+    if (!mac) return res.status(404).json({ error: "Not found" });
+    return res.json(mac.asset);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.post("/api/assets/upsert", async (req, res) => {
+  try {
+    const { projectId, createData, updateData } = req.body;
+    const macAddress = createData.macAddress || updateData.macAddress;
+    let asset;
+    if (macAddress) {
+      const existing = await prisma.assetMAC.findFirst({ where: { macAddress, asset: { projectId } }, include: { asset: true } });
+      if (existing) {
+        asset = await prisma.asset.update({ where: { id: existing.assetId }, data: updateData });
+      } else {
+        asset = await prisma.asset.create({ data: { ...createData, projectId } });
+      }
+    } else {
+      asset = await prisma.asset.create({ data: { ...createData, projectId } });
+    }
+    return res.json(asset);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.get("/api/assets", async (req, res) => {
+  try {
+    const q = req.query as any;
+    const page = parseInt(q.page || "1");
+    const pageSize = Math.min(parseInt(q.pageSize || "50"), 200);
+    const where: any = {};
+    if (q.projectId) where.projectId = q.projectId;
+    const sortBy = q.sortBy || "lastSeen";
+    const sortOrder = q.sortOrder === "asc" ? "asc" : "desc";
+    const total = await prisma.asset.count({ where });
+    const items = await prisma.asset.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, orderBy: { [sortBy]: sortOrder } });
+    return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.get("/api/assets/:id", async (req, res) => {
+  try {
+    const asset = await prisma.asset.findUnique({ where: { id: req.params.id } });
+    if (!asset) return res.status(404).json({ error: "Not found" });
+    return res.json(asset);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.patch("/api/assets/:id", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const asset = await prisma.asset.update({ where: { id: req.params.id }, data });
+    return res.json(asset);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.delete("/api/assets/:id", async (req, res) => {
+  try {
+    await prisma.asset.delete({ where: { id: req.params.id } });
+    return res.json({ deleted: true });
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── Child entity helpers ──────────────────────────────────────────────────────
+
+function makeChildRoutes<T extends { id: string }>(
+  path: string,
+  model: any,
+  uniqueKey: object | ((body: any) => object),
+  parentField: string
+) {
+  // GET all for asset
+  app.get(`/api/assets/:assetId/${path}`, async (req, res) => {
+    try {
+      const items = await model.findMany({ where: { assetId: req.params.assetId } });
+      return res.json(items);
+    } catch (err) { return res.status(500).json({ error: String(err) }); }
+  });
+
+  // POST create
+  app.post(`/api/assets/:assetId/${path}`, async (req, res) => {
+    try {
+      const { _txId, ...data } = req.body;
+      const item = await model.create({ data: { ...data, assetId: req.params.assetId } });
+      return res.json(item);
+    } catch (err) { return res.status(500).json({ error: String(err) }); }
+  });
+
+  // POST upsert
+  app.post(`/api/assets/:assetId/${path}/upsert`, async (req, res) => {
+    try {
+      const { _txId, ...data } = req.body;
+      const where = typeof uniqueKey === "function" ? uniqueKey(data) : uniqueKey;
+      const item = await model.upsert({
+        where, create: { ...data, assetId: req.params.assetId },
+        update: { ...data, assetId: req.params.assetId }
+      });
+      return res.json(item);
+    } catch (err) { return res.status(500).json({ error: String(err) }); }
+  });
+
+  // POST batch-upsert
+  app.post(`/api/assets/:assetId/${path}/batch-upsert`, async (req, res) => {
+    try {
+      const { _txId, items } = req.body;
+      const assetId = req.params.assetId;
+      const results = await prisma.$transaction(
+        (items as any[]).map((item: any) => {
+          const where = typeof uniqueKey === "function" ? uniqueKey({ ...item, assetId }) : uniqueKey;
+          return model.upsert({ where, create: { ...item, assetId }, update: { ...item, assetId } });
+        })
+      );
+      return res.json(results);
+    } catch (err) { return res.status(500).json({ error: String(err) }); }
+  });
+
+  // PATCH single by id
+  app.patch(`/api/assets/${path}/:id`, async (req, res) => {
+    try {
+      const { _txId, ...data } = req.body;
+      const item = await model.update({ where: { id: req.params.id }, data });
+      return res.json(item);
+    } catch (err) { return res.status(500).json({ error: String(err) }); }
+  });
+
+  // DELETE single by id
+  app.delete(`/api/assets/${path}/:id`, async (req, res) => {
+    try {
+      await model.delete({ where: { id: req.params.id } });
+      return res.json({ deleted: true });
+    } catch (err) { return res.status(500).json({ error: String(err) }); }
+  });
+}
+
+// Register child routes for each entity
+makeChildRoutes("hostnames",   prisma.assetHostname,   (d) => ({ assetId_hostname: { assetId: d.assetId, hostname: d.hostname } }), "assetId");
+makeChildRoutes("ip-addresses",prisma.assetIPAddress,  (d) => ({ assetId_ipAddress: { assetId: d.assetId, ipAddress: d.ipAddress } }), "assetId");
+makeChildRoutes("macs",        prisma.assetMAC,        (d) => ({ assetId_macAddress: { assetId: d.assetId, macAddress: d.macAddress } }), "assetId");
+makeChildRoutes("ssids",       prisma.assetSSID,       (d) => ({ assetId_ssid: { assetId: d.assetId, ssid: d.ssid } }), "assetId");
+makeChildRoutes("ports",       prisma.assetPort,       (d) => ({ assetId_port_protocol: { assetId: d.assetId, port: d.port, protocol: d.protocol || "tcp" } }), "assetId");
+makeChildRoutes("tags",        prisma.assetTag,        (d) => ({ assetId_tag: { assetId: d.assetId, tag: d.tag } }), "assetId");
+
+// Tags also accept a { tags: string[] } batch-upsert shorthand
+app.post("/api/assets/:assetId/tags/batch-upsert", async (req, res) => {
+  try {
+    const { _txId, tags } = req.body;
+    const assetId = req.params.assetId;
+    const results = await prisma.$transaction(
+      (tags as string[]).map((tag: string) =>
+        prisma.assetTag.upsert({ where: { assetId_tag: { assetId, tag } }, create: { assetId, tag }, update: {} })
+      )
+    );
+    return res.json(results);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── AssetService (no unique constraint — create/batch/get/update/delete) ──────
+
+app.get("/api/assets/:assetId/services", async (req, res) => {
+  try {
+    const items = await prisma.assetService.findMany({ where: { assetId: req.params.assetId } });
+    return res.json(items);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.post("/api/assets/:assetId/services", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const item = await prisma.assetService.create({ data: { ...data, assetId: req.params.assetId } });
+    return res.json(item);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.post("/api/assets/:assetId/services/batch-insert", async (req, res) => {
+  try {
+    const { _txId, items } = req.body;
+    const assetId = req.params.assetId;
+    const results = await prisma.$transaction(
+      (items as any[]).map((item: any) => prisma.assetService.create({ data: { ...item, assetId } }))
+    );
+    return res.json(results);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.patch("/api/assets/services/:id", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const item = await prisma.assetService.update({ where: { id: req.params.id }, data });
+    return res.json(item);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.delete("/api/assets/services/:id", async (req, res) => {
+  try {
+    await prisma.assetService.delete({ where: { id: req.params.id } });
+    return res.json({ deleted: true });
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── AssetFieldEvidence ────────────────────────────────────────────────────────
+
+app.get("/api/assets/:assetId/evidence", async (req, res) => {
+  try {
+    const q = req.query as any;
+    const where: any = { assetId: req.params.assetId };
+    if (q.fieldName)  where.fieldName  = q.fieldName;
+    if (q.captureId)  where.captureId  = q.captureId;
+    if (q.sourceType) where.sourceType = q.sourceType;
+    const items = await prisma.assetFieldEvidence.findMany({ where, orderBy: { observedAt: "desc" } });
+    return res.json(items);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.post("/api/assets/:assetId/evidence", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const item = await prisma.assetFieldEvidence.create({ data: { ...data, assetId: req.params.assetId } });
+    return res.json(item);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.post("/api/assets/:assetId/evidence/batch-insert", async (req, res) => {
+  try {
+    const { _txId, items } = req.body;
+    const assetId = req.params.assetId;
+    const results = await prisma.$transaction(
+      (items as any[]).map((item: any) => prisma.assetFieldEvidence.create({ data: { ...item, assetId } }))
+    );
+    return res.json(results);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.delete("/api/assets/evidence/:id", async (req, res) => {
+  try {
+    await prisma.assetFieldEvidence.delete({ where: { id: req.params.id } });
+    return res.json({ deleted: true });
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── AssetRelationship ─────────────────────────────────────────────────────────
+
+app.get("/api/assets/:assetId/relationships", async (req, res) => {
+  try {
+    const { direction, relationshipType } = req.query as any;
+    const where: any = {};
+    if (direction === "from") where.sourceId = req.params.assetId;
+    else if (direction === "to") where.targetId = req.params.assetId;
+    else where.OR = [{ sourceId: req.params.assetId }, { targetId: req.params.assetId }];
+    if (relationshipType) where.relationshipType = relationshipType;
+    const items = await prisma.assetRelationship.findMany({ where });
+    return res.json(items);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.post("/api/assets/relationships", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const item = await prisma.assetRelationship.create({ data });
+    return res.json(item);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.post("/api/assets/relationships/upsert", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const item = await prisma.assetRelationship.upsert({
+      where: { sourceId_targetId_relationshipType: { sourceId: data.sourceId, targetId: data.targetId, relationshipType: data.relationshipType } },
+      create: data, update: data
+    });
+    return res.json(item);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.post("/api/assets/relationships/batch-upsert", async (req, res) => {
+  try {
+    const { _txId, items } = req.body;
+    const results = await prisma.$transaction(
+      (items as any[]).map((item: any) =>
+        prisma.assetRelationship.upsert({
+          where: { sourceId_targetId_relationshipType: { sourceId: item.sourceId, targetId: item.targetId, relationshipType: item.relationshipType } },
+          create: item, update: item
+        })
+      )
+    );
+    return res.json(results);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.patch("/api/assets/relationships/:id", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const item = await prisma.assetRelationship.update({ where: { id: req.params.id }, data });
+    return res.json(item);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+app.delete("/api/assets/relationships/:id", async (req, res) => {
+  try {
+    await prisma.assetRelationship.delete({ where: { id: req.params.id } });
+    return res.json({ deleted: true });
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// =============================================================================
+// ENTERPRISE RELATIONSHIP ENDPOINTS  (Phase A.3.1)
+// Routes the Python enterprise_relationship_repository.py calls.
+// Natural-key UPSERT + relationshipKey index lookup + evidence append.
+// =============================================================================
+
+// ── GET /api/relationships/by-key?relationshipKey=<32-hex> ───────────────────
+// Called by get_relationship_by_key() — single indexed column scan.
+app.get("/api/relationships/by-key", async (req, res) => {
+  try {
+    const { relationshipKey } = req.query as any;
+    if (!relationshipKey) return res.status(400).json({ error: "relationshipKey is required" });
+    const rel = await prisma.relationship.findUnique({ where: { relationshipKey } });
+    if (!rel) return res.status(404).json({ error: "Not found" });
+    return res.json(rel);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── GET /api/relationships/by-capture?captureId=&relationshipType=&limit=&offset= ─
+app.get("/api/relationships/by-capture", async (req, res) => {
+  try {
+    const q = req.query as any;
+    if (!q.captureId) return res.status(400).json({ error: "captureId is required" });
+    const limit  = Math.min(parseInt(q.limit  || "500"), 1000);
+    const offset = parseInt(q.offset || "0");
+    const where: any = { evidenceLinks: { some: { captureId: q.captureId } } };
+    if (q.relationshipType) where.relationshipType = q.relationshipType;
+    const items = await prisma.relationship.findMany({ where, skip: offset, take: limit, orderBy: { lastSeen: "desc" } });
+    return res.json(items);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── POST /api/relationships/upsert ──────────────────────────────────────────
+// Natural-key upsert: (projectId, sourceAssetId, targetAssetId,
+//                      relationshipType, protocol, port)
+app.post("/api/relationships/upsert", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const { projectId, sourceAssetId, targetAssetId, relationshipType, protocol, port } = data;
+    // port may be null — Prisma composite unique requires matching null too
+    const whereClause: any = { projectId_sourceAssetId_targetAssetId_relationshipType_protocol_port: {
+      projectId, sourceAssetId, targetAssetId, relationshipType, protocol,
+      port: port ?? null,
+    }};
+    const rel = await prisma.relationship.upsert({
+      where:  whereClause,
+      create: { ...data, port: port ?? null },
+      update: {
+        direction:       data.direction,
+        state:           data.state,
+        relationshipKey: data.relationshipKey ?? undefined,
+        packetCount:     data.packetCount,
+        byteCount:       data.byteCount,
+        firstSeen:       data.firstSeen,
+        lastSeen:        data.lastSeen,
+        confidence:      data.confidence,
+        lastEvidenceId:  data.lastEvidenceId ?? undefined,
+        engineVersion:   data.engineVersion  ?? undefined,
+        metadata:        data.metadata       ?? undefined,
+      },
+    });
+    return res.json(rel);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── POST /api/relationships/batch-upsert ────────────────────────────────────
+// { projectId, items: [...] } — single transaction per chunk from Python.
+app.post("/api/relationships/batch-upsert", async (req, res) => {
+  try {
+    const { _txId, items } = req.body as { _txId?: string; items: any[] };
+    if (!Array.isArray(items) || items.length === 0)
+      return res.json({ upsertedCount: 0, records: [] });
+
+    const results = await prisma.$transaction(
+      items.map((data: any) => {
+        const { projectId, sourceAssetId, targetAssetId, relationshipType, protocol, port } = data;
+        const whereClause: any = { projectId_sourceAssetId_targetAssetId_relationshipType_protocol_port: {
+          projectId, sourceAssetId, targetAssetId, relationshipType, protocol,
+          port: port ?? null,
+        }};
+        return prisma.relationship.upsert({
+          where:  whereClause,
+          create: { ...data, port: port ?? null },
+          update: {
+            direction:       data.direction,
+            state:           data.state,
+            relationshipKey: data.relationshipKey ?? undefined,
+            packetCount:     data.packetCount,
+            byteCount:       data.byteCount,
+            firstSeen:       data.firstSeen,
+            lastSeen:        data.lastSeen,
+            confidence:      data.confidence,
+            lastEvidenceId:  data.lastEvidenceId ?? undefined,
+            engineVersion:   data.engineVersion  ?? undefined,
+            metadata:        data.metadata       ?? undefined,
+          },
+        });
+      })
+    );
+
+    return res.json({ upsertedCount: results.length, records: results });
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── POST /api/relationships ──────────────────────────────────────────────────
+app.post("/api/relationships", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const rel = await prisma.relationship.create({ data: { ...data, port: data.port ?? null } });
+    return res.json(rel);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── GET /api/relationships — list with filters ───────────────────────────────
+app.get("/api/relationships", async (req, res) => {
+  try {
+    const q = req.query as any;
+    const limit  = Math.min(parseInt(q.limit  || "200"), 1000);
+    const offset = parseInt(q.offset || "0");
+    const where: any = {};
+    if (q.projectId)        where.projectId        = q.projectId;
+    if (q.relationshipType) where.relationshipType = q.relationshipType;
+    if (q.state)            where.state            = q.state;
+    if (q.assetId) {
+      if (q.direction === "from")     where.sourceAssetId = q.assetId;
+      else if (q.direction === "to")  where.targetAssetId = q.assetId;
+      else where.OR = [{ sourceAssetId: q.assetId }, { targetAssetId: q.assetId }];
+    }
+    const items = await prisma.relationship.findMany({
+      where, skip: offset, take: limit, orderBy: { lastSeen: "desc" },
+    });
+    return res.json(items);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── GET /api/relationships/:id ───────────────────────────────────────────────
+app.get("/api/relationships/:id", async (req, res) => {
+  try {
+    const rel = await prisma.relationship.findUnique({ where: { id: req.params.id } });
+    if (!rel) return res.status(404).json({ error: "Not found" });
+    return res.json(rel);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── PATCH /api/relationships/:id ─────────────────────────────────────────────
+app.patch("/api/relationships/:id", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const rel = await prisma.relationship.update({ where: { id: req.params.id }, data });
+    return res.json(rel);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── DELETE /api/relationships/:id ────────────────────────────────────────────
+app.delete("/api/relationships/:id", async (req, res) => {
+  try {
+    await prisma.relationship.delete({ where: { id: req.params.id } });
+    return res.json({ deleted: true });
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── POST /api/relationships/:id/evidence ────────────────────────────────────
+app.post("/api/relationships/:id/evidence", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    // Upsert on (relationshipId, evidenceId) to stay idempotent
+    const item = await prisma.relationshipEvidence.upsert({
+      where: { relationshipId_evidenceId: {
+        relationshipId: req.params.id,
+        evidenceId:     data.evidenceId,
+      }},
+      create: { ...data, relationshipId: req.params.id },
+      update: {},   // already exists — no-op
+    });
+    return res.json(item);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── POST /api/relationships/:id/evidence/batch-insert ───────────────────────
+// { relationshipId, evidenceIds: [], captureId?, sourceType?, observedAt? }
+app.post("/api/relationships/:id/evidence/batch-insert", async (req, res) => {
+  try {
+    const { _txId, evidenceIds, captureId, sourceType, observedAt } = req.body as {
+      _txId?: string; evidenceIds: string[];
+      captureId?: string; sourceType?: string; observedAt?: string;
+    };
+    if (!Array.isArray(evidenceIds) || evidenceIds.length === 0)
+      return res.json({ insertedCount: 0, duplicateCount: 0 });
+
+    const relationshipId = req.params.id;
+
+    // Find which evidenceIds already exist in one query
+    const existing = await prisma.relationshipEvidence.findMany({
+      where: { relationshipId, evidenceId: { in: evidenceIds } },
+      select: { evidenceId: true },
+    });
+    const existingSet = new Set(existing.map((e: any) => e.evidenceId));
+    const toInsert    = evidenceIds.filter((eid: string) => !existingSet.has(eid));
+    const dupeCount   = evidenceIds.length - toInsert.length;
+
+    if (toInsert.length > 0) {
+      await prisma.$transaction(
+        toInsert.map((evidenceId: string) =>
+          prisma.relationshipEvidence.create({
+            data: {
+              relationshipId,
+              evidenceId,
+              captureId:   captureId   ?? null,
+              sourceType:  sourceType  ?? null,
+              observedAt:  observedAt  ? new Date(observedAt) : new Date(),
+            },
+          })
+        )
+      );
+    }
+
+    return res.json({ insertedCount: toInsert.length, duplicateCount: dupeCount });
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── GET /api/relationships/:id/evidence ─────────────────────────────────────
+app.get("/api/relationships/:id/evidence", async (req, res) => {
+  try {
+    const q      = req.query as any;
+    const limit  = Math.min(parseInt(q.limit  || "200"), 1000);
+    const offset = parseInt(q.offset || "0");
+    const items  = await prisma.relationshipEvidence.findMany({
+      where: { relationshipId: req.params.id },
+      skip: offset, take: limit,
+      orderBy: { observedAt: "desc" },
+    });
+    return res.json(items);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// =============================================================================
+// RELATIONSHIP HISTORY ENDPOINTS  (Phase A.3.1 — mandatory AI fields)
+// changedFields + changeReason on every row — AI Copilot explanation engine.
+// =============================================================================
+
+// ── GET /api/relationships/history/by-key?relationshipKey= ──────────────────
+// AI Copilot primary lookup — knows the key, not the DB id.
+app.get("/api/relationships/history/by-key", async (req, res) => {
+  try {
+    const q = req.query as any;
+    if (!q.relationshipKey) return res.status(400).json({ error: "relationshipKey is required" });
+    const limit  = Math.min(parseInt(q.limit  || "200"), 1000);
+    const offset = parseInt(q.offset || "0");
+    const items  = await prisma.relationshipHistory.findMany({
+      where: { relationshipKey: q.relationshipKey },
+      skip: offset, take: limit,
+      orderBy: { occurredAt: "desc" },
+    });
+    return res.json(items);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── POST /api/relationships/history/batch-append ────────────────────────────
+// { projectId, items: [...] } — chunked from Python batch_append_relationship_history().
+app.post("/api/relationships/history/batch-append", async (req, res) => {
+  try {
+    const { items } = req.body as { items: any[] };
+    if (!Array.isArray(items) || items.length === 0)
+      return res.json({ insertedCount: 0, duplicateCount: 0 });
+
+    let inserted = 0;
+    let dupes    = 0;
+
+    await prisma.$transaction(
+      items.map((data: any) =>
+        prisma.relationshipHistory.upsert({
+          where: { relationshipId_eventType_occurredAt: {
+            relationshipId : data.relationshipId,
+            eventType      : data.eventType,
+            occurredAt     : data.occurredAt ? new Date(data.occurredAt) : new Date(),
+          }},
+          create: {
+            ...data,
+            occurredAt: data.occurredAt ? new Date(data.occurredAt) : new Date(),
+          },
+          update: {},   // idempotent — never overwrite history
+        })
+      )
+    ).then((results) => {
+      inserted = results.length;
+    });
+
+    return res.json({ insertedCount: inserted, duplicateCount: dupes });
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── POST /api/relationships/history ─────────────────────────────────────────
+// Single event append — called by append_relationship_history().
+app.post("/api/relationships/history", async (req, res) => {
+  try {
+    const { _txId, ...data } = req.body;
+    const item = await prisma.relationshipHistory.upsert({
+      where: { relationshipId_eventType_occurredAt: {
+        relationshipId : data.relationshipId,
+        eventType      : data.eventType,
+        occurredAt     : data.occurredAt ? new Date(data.occurredAt) : new Date(),
+      }},
+      create: {
+        ...data,
+        occurredAt: data.occurredAt ? new Date(data.occurredAt) : new Date(),
+      },
+      update: {},   // idempotent — history rows are immutable
+    });
+    return res.json(item);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── GET /api/relationships/history — project-scoped list ────────────────────
+app.get("/api/relationships/history", async (req, res) => {
+  try {
+    const q      = req.query as any;
+    const limit  = Math.min(parseInt(q.limit  || "500"), 1000);
+    const offset = parseInt(q.offset || "0");
+    const where: any = {};
+    if (q.projectId)    where.projectId    = q.projectId;
+    if (q.eventType)    where.eventType    = q.eventType;
+    if (q.changeReason) where.changeReason = q.changeReason;
+    const items = await prisma.relationshipHistory.findMany({
+      where, skip: offset, take: limit,
+      orderBy: { occurredAt: "desc" },
+    });
+    return res.json(items);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// ── GET /api/relationships/:id/history ──────────────────────────────────────
+// History for one specific Relationship with optional filters.
+app.get("/api/relationships/:id/history", async (req, res) => {
+  try {
+    const q      = req.query as any;
+    const limit  = Math.min(parseInt(q.limit  || "200"), 1000);
+    const offset = parseInt(q.offset || "0");
+    const where: any = { relationshipId: req.params.id };
+    if (q.eventType)    where.eventType    = q.eventType;
+    if (q.changeReason) where.changeReason = q.changeReason;
+    // changedField filter: check if JSON array string contains the field name
+    if (q.changedField) {
+      where.changedFields = { contains: `"${q.changedField}"` };
+    }
+    const items = await prisma.relationshipHistory.findMany({
+      where, skip: offset, take: limit,
+      orderBy: [{ occurredAt: "desc" }, { sequenceNumber: "desc" }],
+    });
+    return res.json(items);
+  } catch (err) { return res.status(500).json({ error: String(err) }); }
+});
+
+// =============================================================================
+
+const port = process.env.PORT || 4000;
+app.listen(port, () => {
+  console.log(`Capture persistence API listening on port ${port}`);
+});

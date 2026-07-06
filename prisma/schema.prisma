@@ -1,0 +1,316 @@
+// Prisma schema file for NetFusion platform database foundation
+// Phase A5.1.2 — Core Database Models
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMERATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+  DELETED
+}
+
+enum SessionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  LOGGED_OUT
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+  CLOSED
+  DRAFT
+}
+
+enum InvestigationStatus {
+  OPEN
+  IN_PROGRESS
+  PENDING_REVIEW
+  RESOLVED
+  CLOSED
+  ARCHIVED
+}
+
+enum AuditAction {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  EXPORT
+  IMPORT
+  ASSIGN
+  ESCALATE
+  ARCHIVE
+  RESTORE
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FOUNDATION MODEL — retained from Phase A5.1.1
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SystemHealth {
+  id        String    @id @default(uuid()) @db.Uuid
+  status    String    @default("OK")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@map("system_health")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERMISSION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Atomic capability token.  Format: "<resource>.<action>" e.g. "asset.read".
+/// Names are globally unique and immutable once assigned.
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique                  // e.g. "asset.read"
+  displayName String                            // human label
+  description String?
+  resource    String                            // e.g. "asset"
+  action      String                            // e.g. "read"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  rolePermissions RolePermission[]
+
+  @@index([resource])
+  @@index([action])
+  @@index([createdAt])
+  @@map("permissions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ROLE
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Named collection of permissions.  Names are unique.
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique               // e.g. "admin"
+  displayName String
+  description String?
+  isSystem    Boolean  @default(false)       // true → cannot be deleted
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@index([createdAt])
+  @@map("roles")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ROLE-PERMISSION JUNCTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+model RolePermission {
+  id           String     @id @default(uuid()) @db.Uuid
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  role       Role       @relation(fields: [roleId],       references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// USER
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Platform user account.  Soft-deleted via deletedAt.
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique
+  username     String     @unique
+  displayName  String
+  passwordHash String
+  status       UserStatus @default(PENDING_VERIFICATION)
+  avatarUrl    String?
+  timezone     String     @default("UTC")
+  lastLoginAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  sessions      Session[]
+  ownedProjects Project[]      @relation("ProjectOwner")
+  investigations Investigation[]
+  auditLogs     AuditLog[]
+  userRoles     UserRole[]
+
+  @@index([email])
+  @@index([username])
+  @@index([status])
+  @@index([createdAt])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// USER-ROLE JUNCTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+model UserRole {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  roleId    String   @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Authentication session produced on login.  Revoked on logout or expiry.
+model Session {
+  id           String        @id @default(uuid()) @db.Uuid
+  userId       String        @db.Uuid
+  tokenHash    String        @unique          // SHA-256 of the raw JWT/token
+  status       SessionStatus @default(ACTIVE)
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  lastActiveAt DateTime      @default(now())
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  deletedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([createdAt])
+  @@map("sessions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROJECT
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Top-level workspace that groups investigations and captures.
+model Project {
+  id          String        @id @default(uuid()) @db.Uuid
+  ownerId     String        @db.Uuid
+  name        String
+  description String?
+  status      ProjectStatus @default(ACTIVE)
+  tags        String[]      @default([])      // free-text labels
+  metadata    Json?                           // arbitrary extension bag
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+
+  owner          User            @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  investigations Investigation[]
+  auditLogs      AuditLog[]
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("projects")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INVESTIGATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Structured analysis task within a project.
+model Investigation {
+  id          String              @id @default(uuid()) @db.Uuid
+  projectId   String              @db.Uuid
+  ownerId     String              @db.Uuid
+  title       String
+  description String?
+  status      InvestigationStatus @default(OPEN)
+  priority    Int                 @default(2)   // 1=critical 2=high 3=medium 4=low
+  tags        String[]            @default([])
+  metadata    Json?
+  startedAt   DateTime?
+  resolvedAt  DateTime?
+  closedAt    DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  deletedAt   DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  owner   User    @relation(fields: [ownerId],   references: [id], onDelete: Restrict)
+
+  @@index([projectId])
+  @@index([ownerId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([projectId, status])
+  @@map("investigations")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIT LOG
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Immutable append-only audit trail for every user-initiated action.
+model AuditLog {
+  id           String      @id @default(uuid()) @db.Uuid
+  userId       String      @db.Uuid
+  projectId    String?     @db.Uuid            // nullable — some actions are global
+  action       AuditAction
+  resourceType String                          // "user" | "project" | "investigation" | …
+  resourceId   String?                         // PK of the affected resource
+  description  String?                         // human-readable summary
+  ipAddress    String?
+  userAgent    String?
+  metadata     Json?                           // diff / payload snapshot
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  deletedAt    DateTime?
+
+  user    User     @relation(fields: [userId],    references: [id], onDelete: Restrict)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([action])
+  @@index([resourceType])
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
