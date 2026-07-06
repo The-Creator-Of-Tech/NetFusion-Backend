@@ -137,7 +137,6 @@ model RolePermission {
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@unique([roleId, permissionId])
-  @@index([roleId])
   @@index([permissionId])
   @@map("role_permissions")
 }
@@ -166,6 +165,19 @@ model User {
   investigations Investigation[]
   auditLogs     AuditLog[]
   userRoles     UserRole[]
+  conversations      Conversation[]
+  sessionMemories    SessionMemory[]
+  contextWindows     ContextWindow[]
+  promptAssemblies   PromptAssembly[]
+  reasoningSessions  Reasoning[]
+  executions         Execution[]
+  streamingSessions  Streaming[]
+  favorites          Favorite[]
+  notifications      Notification[]
+  preferences        UserPreference[]
+  apiKeys            ApiKey[]
+  activityLogs       ActivityLog[]
+  comments           Comment[]
 
   @@index([email])
   @@index([username])
@@ -190,7 +202,6 @@ model UserRole {
   role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
   @@unique([userId, roleId])
-  @@index([userId])
   @@index([roleId])
   @@map("user_roles")
 }
@@ -243,6 +254,30 @@ model Project {
   owner          User            @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   investigations Investigation[]
   auditLogs      AuditLog[]
+  assets             Asset[]
+  evidence           Evidence[]
+  timelineEvents     TimelineEvent[]
+  findings           Finding[]
+  alerts             Alert[]
+  notes              Note[]
+  reports            Report[]
+  attackGraphNodes   AttackGraphNode[]
+  attackGraphEdges   AttackGraphEdge[]
+  conversations      Conversation[]
+  sessionMemories    SessionMemory[]
+  contextWindows     ContextWindow[]
+  promptAssemblies   PromptAssembly[]
+  reasoningSessions  Reasoning[]
+  executions         Execution[]
+  streamingSessions  Streaming[]
+  playbooks          Playbook[]
+  rules              Rule[]
+  automations        Automation[]
+  caseFlows          CaseFlow[]
+  projectTags        Tag[]
+  attachments        Attachment[]
+  comments           Comment[]
+  activityLogs       ActivityLog[]
 
   @@index([ownerId])
   @@index([status])
@@ -274,6 +309,30 @@ model Investigation {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   owner   User    @relation(fields: [ownerId],   references: [id], onDelete: Restrict)
+  assets             Asset[]
+  evidence           Evidence[]
+  timelineEvents     TimelineEvent[]
+  findings           Finding[]
+  alerts             Alert[]
+  notes              Note[]
+  reports            Report[]
+  attackGraphNodes   AttackGraphNode[]
+  attackGraphEdges   AttackGraphEdge[]
+  conversations      Conversation[]
+  sessionMemories    SessionMemory[]
+  contextWindows     ContextWindow[]
+  promptAssemblies   PromptAssembly[]
+  reasoningSessions  Reasoning[]
+  executions         Execution[]
+  streamingSessions  Streaming[]
+  playbooks          Playbook[]
+  rules              Rule[]
+  automations        Automation[]
+  caseFlows          CaseFlow[]
+  attachments        Attachment[]
+  comments           Comment[]
+  activityLogs       ActivityLog[]
+  tagAssignments     TagAssignment[]
 
   @@index([projectId])
   @@index([ownerId])
@@ -314,3 +373,2264 @@ model AuditLog {
   @@index([userId, createdAt])
   @@map("audit_logs")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INVESTIGATION MODELS (Phase A5.1.3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum AssetType {
+  SERVER
+  WORKSTATION
+  ROUTER
+  SWITCH
+  FIREWALL
+  MOBILE
+  IOT
+  CLOUD
+  UNKNOWN
+  OTHER
+}
+
+enum FindingSeverity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FindingStatus {
+  OPEN
+  CONFIRMED
+  SUPPRESSED
+  FALSE_POSITIVE
+  RESOLVED
+  CLOSED
+}
+
+enum AlertSeverity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AlertStatus {
+  NEW
+  OPEN
+  ACKNOWLEDGED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  SUPPRESSED
+}
+
+enum TimelineEventType {
+  OBSERVED
+  IDENTITY_MATCH
+  IDENTITY_CREATED
+  RELATIONSHIP_CREATED
+  RELATIONSHIP_UPDATED
+  EVIDENCE_ADDED
+  HISTORY_CREATED
+  ALERT_GENERATED
+  FINDING_CREATED
+  MITRE_MAPPED
+  ATTACK_PATTERN
+  ATTACK_CHAIN
+  BLAST_RADIUS
+  LATERAL_MOVEMENT
+  PIVOT
+  CHOKE_POINT
+  MANUAL_ACTION
+}
+
+enum EvidenceType {
+  PACKET
+  LOG
+  FILE
+  REGISTRY
+  PROCESS
+  IOC
+  ARTIFACT
+  METRIC
+  USER_INPUT
+  OTHER
+}
+
+enum ReportStatus {
+  DRAFT
+  READY
+  PUBLISHED
+  ARCHIVED
+}
+
+model Asset {
+  id              String          @id @default(uuid()) @db.Uuid
+  projectId       String          @db.Uuid
+  investigationId String          @db.Uuid
+  macAddress      String?
+  hostname        String?
+  deviceName      String?
+  vendor          String?
+  operatingSystem String?
+  currentIp       String?
+  currentStatus   String?
+  type            AssetType       @default(UNKNOWN)
+  riskScore       Float           @default(0.0)
+  confidence      Float           @default(100.0)
+  
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation  Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  evidence       Evidence[]
+  findings       Finding[]
+
+  @@index([investigationId])
+  @@index([projectId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("assets")
+}
+
+model Evidence {
+  id              String          @id @default(uuid()) @db.Uuid
+  projectId       String          @db.Uuid
+  investigationId String          @db.Uuid
+  assetId         String?         @db.Uuid
+  findingId       String?         @db.Uuid
+  fieldName       String
+  fieldValue      String
+  sourceType      String
+  type            EvidenceType    @default(OTHER)
+  rawValue        String?
+  observedAt      DateTime        @default(now())
+  confidence      Int             @default(100)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation  Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  asset          Asset?        @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  finding        Finding?      @relation(fields: [findingId], references: [id], onDelete: SetNull)
+
+  @@index([investigationId])
+  @@index([projectId])
+  @@index([assetId])
+  @@index([findingId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("evidence")
+}
+
+model TimelineEvent {
+  id              String            @id @default(uuid()) @db.Uuid
+  projectId       String            @db.Uuid
+  investigationId String            @db.Uuid
+  title           String
+  description     String?
+  type            TimelineEventType @default(OBSERVED)
+  eventTimestamp  DateTime          @default(now())
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation  Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+
+  @@index([investigationId])
+  @@index([projectId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("timeline_events")
+}
+
+model Finding {
+  id              String          @id @default(uuid()) @db.Uuid
+  projectId       String          @db.Uuid
+  investigationId String          @db.Uuid
+  assetId         String?         @db.Uuid
+  title           String
+  description     String?
+  category        String          @default("OTHER")
+  severity        FindingSeverity @default(MEDIUM)
+  status          FindingStatus   @default(OPEN)
+  riskScore       Float           @default(0.0)
+  confidence      Float           @default(100.0)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation  Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  asset          Asset?        @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  evidence       Evidence[]
+  alerts         Alert[]
+
+  @@index([investigationId])
+  @@index([projectId])
+  @@index([assetId])
+  @@index([severity])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("findings")
+}
+
+model Alert {
+  id              String        @id @default(uuid()) @db.Uuid
+  projectId       String        @db.Uuid
+  investigationId String        @db.Uuid
+  findingId       String?       @db.Uuid
+  title           String
+  description     String?
+  severity        AlertSeverity @default(MEDIUM)
+  status          AlertStatus   @default(NEW)
+  source          String        @default("FINDING")
+  riskScore       Float         @default(0.0)
+  confidence      Float         @default(100.0)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation  Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  finding        Finding?      @relation(fields: [findingId], references: [id], onDelete: SetNull)
+
+  @@index([investigationId])
+  @@index([projectId])
+  @@index([findingId])
+  @@index([severity])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("alerts")
+}
+
+model AttackGraphNode {
+  id              String   @id @default(uuid()) @db.Uuid
+  projectId       String   @db.Uuid
+  investigationId String   @db.Uuid
+  label           String
+  type            String   @default("host")
+  x               Float?
+  y               Float?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project        Project           @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation  Investigation     @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  outgoingEdges  AttackGraphEdge[] @relation("EdgeSource")
+  incomingEdges  AttackGraphEdge[] @relation("EdgeTarget")
+
+  @@index([investigationId])
+  @@index([projectId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("attack_graph_nodes")
+}
+
+model AttackGraphEdge {
+  id              String   @id @default(uuid()) @db.Uuid
+  projectId       String   @db.Uuid
+  investigationId String   @db.Uuid
+  sourceNodeId    String   @db.Uuid
+  targetNodeId    String   @db.Uuid
+  label           String?
+  weight          Float    @default(1.0)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation  Investigation   @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  sourceNode     AttackGraphNode @relation("EdgeSource", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNode     AttackGraphNode @relation("EdgeTarget", fields: [targetNodeId], references: [id], onDelete: Cascade)
+
+  @@index([investigationId])
+  @@index([projectId])
+  @@index([sourceNodeId])
+  @@index([targetNodeId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("attack_graph_edges")
+}
+
+model Note {
+  id              String   @id @default(uuid()) @db.Uuid
+  projectId       String   @db.Uuid
+  investigationId String   @db.Uuid
+  title           String?
+  content         String
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation  Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+
+  @@index([investigationId])
+  @@index([projectId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("notes")
+}
+
+model Report {
+  id              String       @id @default(uuid()) @db.Uuid
+  projectId       String       @db.Uuid
+  investigationId String       @db.Uuid
+  title           String
+  content         String
+  type            String       @default("SUMMARY")
+  status          ReportStatus @default(DRAFT)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation  Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+
+  @@index([investigationId])
+  @@index([projectId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("reports")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI MODELS (Phase A5.1.4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ConversationStatus {
+  ACTIVE
+  ARCHIVED
+  COMPLETED
+  DELETED
+}
+
+enum ExecutionStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+  PENDING
+}
+
+enum ProviderStatus {
+  ACTIVE
+  INACTIVE
+  DEGRADED
+}
+
+enum StreamingStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+  PENDING
+}
+
+enum ReasoningStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+  PENDING
+}
+
+enum PromptStatus {
+  ACTIVE
+  ARCHIVED
+  DRAFT
+}
+
+enum MemoryStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum ContextStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum ProviderType {
+  CLOUD
+  LOCAL
+  HYBRID
+}
+
+model Conversation {
+  id              String             @id @default(uuid()) @db.Uuid
+  projectId       String             @db.Uuid
+  investigationId String?            @db.Uuid
+  userId          String?            @db.Uuid
+  title           String
+  status          ConversationStatus @default(ACTIVE)
+  summary         String?
+  tags            String[]           @default([])
+  contextSize     Int                @default(0)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation  Investigation?  @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  user           User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  messages       ConversationMessage[]
+  sessionMemories SessionMemory[]
+  contextWindows  ContextWindow[]
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("conversations")
+}
+
+model ConversationMessage {
+  id              String             @id @default(uuid()) @db.Uuid
+  conversationId  String             @db.Uuid
+  parentMessageId String?            @db.Uuid
+  role            String
+  content         String
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  conversation    Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  parentMessage   ConversationMessage? @relation("MessageThread", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  replies         ConversationMessage[] @relation("MessageThread")
+
+  @@index([conversationId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("conversation_messages")
+}
+
+model SessionMemory {
+  id              String             @id @default(uuid()) @db.Uuid
+  conversationId  String             @db.Uuid
+  investigationId String?            @db.Uuid
+  projectId       String             @db.Uuid
+  userId          String?            @db.Uuid
+  status          MemoryStatus       @default(ACTIVE)
+  contextSize     Int                @default(0)
+  sessionName     String?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  conversation    Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  investigation   Investigation?  @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  user            User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  entries         MemoryEntry[]
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([conversationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("session_memories")
+}
+
+model MemoryEntry {
+  id              String             @id @default(uuid()) @db.Uuid
+  memoryId        String             @db.Uuid
+  memoryType      String
+  state           String
+  title           String
+  content         String
+  importanceScore Float
+  confidence      Float
+  sourceId        String?
+  tags            String[]           @default([])
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  sessionMemory   SessionMemory   @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("memory_entries")
+}
+
+model ContextWindow {
+  id              String             @id @default(uuid()) @db.Uuid
+  investigationId String?            @db.Uuid
+  conversationId  String?            @db.Uuid
+  projectId       String             @db.Uuid
+  userId          String?            @db.Uuid
+  status          ContextStatus      @default(ACTIVE)
+  contextSize     Int                @default(0)
+  windowName      String?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  investigation   Investigation?  @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  conversation    Conversation?   @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  user            User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  entries         ContextEntry[]
+  prompts         PromptAssembly[]
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([conversationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("context_windows")
+}
+
+model ContextEntry {
+  id              String             @id @default(uuid()) @db.Uuid
+  contextId       String             @db.Uuid
+  source          String
+  priority        String
+  title           String
+  content         String
+  referenceId     String
+  importanceScore Float
+  confidence      Float
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  contextWindow   ContextWindow   @relation(fields: [contextId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("context_entries")
+}
+
+model PromptAssembly {
+  id              String             @id @default(uuid()) @db.Uuid
+  reasoningId     String?            @db.Uuid
+  contextId       String?            @db.Uuid
+  investigationId String             @db.Uuid
+  projectId       String             @db.Uuid
+  userId          String?            @db.Uuid
+  systemPrompt    String
+  userPrompt      String
+  maxTokens       Int                @default(8192)
+  reservedTokens  Int                @default(1024)
+  processingTimeMs Int               @default(0)
+  status          PromptStatus       @default(ACTIVE)
+  promptName      String?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  reasoning       Reasoning?      @relation(fields: [reasoningId], references: [id], onDelete: SetNull)
+  contextWindow   ContextWindow?  @relation(fields: [contextId], references: [id], onDelete: SetNull)
+  investigation   Investigation   @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  user            User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  sections        PromptSection[]
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("prompt_assemblies")
+}
+
+model PromptSection {
+  id              String             @id @default(uuid()) @db.Uuid
+  promptId        String             @db.Uuid
+  title           String
+  content         String
+  priority        Int                @default(50)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  promptAssembly  PromptAssembly  @relation(fields: [promptId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("prompt_sections")
+}
+
+model Reasoning {
+  id                String             @id @default(uuid()) @db.Uuid
+  projectId         String             @db.Uuid
+  investigationId   String             @db.Uuid
+  userId            String?            @db.Uuid
+  decision          String?
+  overallConfidence Float              @default(0.0)
+  overallRisk       Float              @default(0.0)
+  status            ReasoningStatus    @default(ACTIVE)
+  sessionName       String?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project           Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation     Investigation   @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  user              User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  steps             ReasoningStep[]
+  prompts           PromptAssembly[]
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("reasoning_sessions")
+}
+
+model ReasoningStep {
+  id                String             @id @default(uuid()) @db.Uuid
+  reasoningId       String             @db.Uuid
+  stepNumber        Int
+  stage             String
+  inputSummary      String
+  outputSummary     String
+  confidence        Float
+  evidenceIds       String[]           @default([])
+  findingIds        String[]           @default([])
+  alertIds          String[]           @default([])
+  relationshipIds   String[]           @default([])
+  timelineEventIds  String[]           @default([])
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  reasoning         Reasoning       @relation(fields: [reasoningId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("reasoning_steps")
+}
+
+model Provider {
+  id              String             @id @default(uuid()) @db.Uuid
+  providerName    String             @unique
+  displayName     String
+  apiVersion      String
+  endpoint        String
+  defaultModel    String
+  enabled         Boolean            @default(true)
+  priority        Int                @default(50)
+  healthScore     Float              @default(100.0)
+  providerType    ProviderType       @default(CLOUD)
+  status          ProviderStatus     @default(ACTIVE)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  models          ProviderModel[]
+  executions      Execution[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("providers")
+}
+
+model ProviderModel {
+  id               String             @id @default(uuid()) @db.Uuid
+  providerId       String             @db.Uuid
+  modelName        String
+  alias            String?
+  streaming        Boolean            @default(false)
+  toolCalling      Boolean            @default(false)
+  jsonMode         Boolean            @default(false)
+  vision           Boolean            @default(false)
+  embeddings       Boolean            @default(false)
+  maxContextTokens Int                @default(8192)
+  maxOutputTokens  Int                @default(4096)
+  enabled          Boolean            @default(true)
+  priority         Int                @default(50)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  provider         Provider           @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  executions       Execution[]
+
+  @@unique([providerId, modelName])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("provider_models")
+}
+
+model Execution {
+  id               String             @id @default(uuid()) @db.Uuid
+  providerId       String             @db.Uuid
+  providerModelId  String?            @db.Uuid
+  systemPrompt     String
+  userPrompt       String
+  temperature      Float              @default(0.0)
+  maxTokens        Int                @default(1024)
+  stream           Boolean            @default(false)
+  strategy         String             @default("priority")
+  projectId        String?            @db.Uuid
+  investigationId  String?            @db.Uuid
+  userId           String?            @db.Uuid
+  status           ExecutionStatus    @default(ACTIVE)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  provider         Provider           @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  providerModel    ProviderModel?     @relation(fields: [providerModelId], references: [id], onDelete: SetNull)
+  project          Project?           @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation    Investigation?     @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  user             User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  usage            ExecutionUsage?
+  streaming        Streaming?
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([providerId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("executions")
+}
+
+model ExecutionUsage {
+  id               String             @id @default(uuid()) @db.Uuid
+  executionId      String             @unique @db.Uuid
+  promptTokens     Int
+  completionTokens Int
+  totalTokens      Int
+  estimatedCost    Float
+  latencyMs        Int
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  execution        Execution          @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("execution_usages")
+}
+
+model Streaming {
+  id               String             @id @default(uuid()) @db.Uuid
+  executionId      String?            @unique @db.Uuid
+  streamName       String?
+  status           StreamingStatus    @default(ACTIVE)
+  projectId        String?            @db.Uuid
+  investigationId  String?            @db.Uuid
+  userId           String?            @db.Uuid
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  execution        Execution?         @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  project          Project?           @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation    Investigation?     @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  user             User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  chunks           StreamingChunk[]
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("streaming_sessions")
+}
+
+model StreamingChunk {
+  id               String             @id @default(uuid()) @db.Uuid
+  streamingId      String             @db.Uuid
+  sequenceNumber   Int
+  content          String
+  finishReason     String?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  streaming        Streaming          @relation(fields: [streamingId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("streaming_chunks")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KNOWLEDGE MODELS (Phase A5.1.5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum MitreTacticType {
+  RECONNAISSANCE
+  RESOURCE_DEVELOPMENT
+  INITIAL_ACCESS
+  EXECUTION
+  PERSISTENCE
+  PRIVILEGE_ESCALATION
+  DEFENSE_EVASION
+  CREDENTIAL_ACCESS
+  DISCOVERY
+  LATERAL_MOVEMENT
+  COLLECTION
+  COMMAND_AND_CONTROL
+  EXFILTRATION
+  IMPACT
+}
+
+enum CVESeverity {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IOCType {
+  IP
+  DOMAIN
+  URL
+  HASH_MD5
+  HASH_SHA1
+  HASH_SHA256
+  EMAIL
+  FILE_PATH
+  MUTEX
+  REGISTRY_KEY
+}
+
+enum IOCStatus {
+  ACTIVE
+  INACTIVE
+  FALSE_POSITIVE
+  SUSPICIOUS
+  REVOKED
+}
+
+enum ThreatLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ThreatStatus {
+  ACTIVE
+  INACTIVE
+  MONITORED
+  UNKNOWN
+}
+
+enum CampaignStatus {
+  ACTIVE
+  INACTIVE
+  COMPLETED
+  PAUSED
+}
+
+enum RelationshipType {
+  EXPLOITS
+  USES
+  ATTRIBUTED_TO
+  ASSOCIATED_WITH
+  TARGETS
+}
+
+model MitreTactic {
+  id          String          @id @default(uuid()) @db.Uuid
+  tacticKey   String          @unique
+  name        String
+  description String?
+  tacticType  MitreTacticType
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  techniques  MitreTechnique[]
+
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("mitre_tactics")
+}
+
+model MitreTechnique {
+  id          String          @id @default(uuid()) @db.Uuid
+  tacticId    String?         @db.Uuid
+  mitreId     String          @unique
+  name        String
+  description String?
+  detection   String?
+  platforms   String[]        @default([])
+  references  String[]        @default([])
+  severity    CVESeverity     @default(MEDIUM)
+  dataSource  String?
+  revoked     Boolean         @default(false)
+  deprecated  Boolean         @default(false)
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  tactic      MitreTactic?    @relation(fields: [tacticId], references: [id], onDelete: SetNull)
+  mitigations MitreMitigation[] @relation("TechniqueMitigations")
+  cves        CVE[]           @relation("CVETechniques")
+  iocs        IOC[]           @relation("IOCTechniques")
+  threatActors ThreatActor[]   @relation("ActorTechniques")
+  threatCampaigns ThreatCampaign[] @relation("CampaignTechniques")
+  threatRelationships ThreatRelationship[]
+  iocRelationships IOCRelationship[]
+
+  @@index([severity])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("mitre_techniques")
+}
+
+model MitreMitigation {
+  id          String          @id @default(uuid()) @db.Uuid
+  mitreId     String          @unique
+  name        String
+  description String?
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  techniques  MitreTechnique[] @relation("TechniqueMitigations")
+
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("mitre_mitigations")
+}
+
+model CVE {
+  id                String          @id @default(uuid()) @db.Uuid
+  cveId             String          @unique
+  description       String?
+  severity          CVESeverity
+  cvssScore         Float
+  publishedDate     DateTime?
+  modifiedDate      DateTime?
+  references        String[]        @default([])
+  affectedPlatforms String[]        @default([])
+  exploited         Boolean         @default(false)
+  patched           Boolean         @default(false)
+  vendor            String?
+  product           String?
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  cvss              CVSS?
+  affectedProducts  AffectedProduct[]
+  techniques        MitreTechnique[] @relation("CVETechniques")
+  iocs              IOC[]            @relation("CVEIOCs")
+  threatRelationships ThreatRelationship[]
+  iocRelationships  IOCRelationship[]
+
+  @@index([severity])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("cves")
+}
+
+model CVSS {
+  id                  String          @id @default(uuid()) @db.Uuid
+  cveId               String          @unique @db.Uuid
+  baseScore           Float
+  severity            CVESeverity
+  vectorString        String?
+  exploitabilityScore Float?
+  impactScore         Float?
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  cve                 CVE             @relation(fields: [cveId], references: [id], onDelete: Cascade)
+
+  @@index([severity])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("cvss_details")
+}
+
+model AffectedProduct {
+  id          String          @id @default(uuid()) @db.Uuid
+  cveId       String          @db.Uuid
+  vendor      String
+  product     String
+  productVersion String?
+  patched     Boolean         @default(false)
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  cve         CVE             @relation(fields: [cveId], references: [id], onDelete: Cascade)
+
+  @@index([cveId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("affected_products")
+}
+
+model IOC {
+  id          String          @id @default(uuid()) @db.Uuid
+  iocId       String          @unique
+  value       String
+  iocType     IOCType
+  severity    CVESeverity
+  status      IOCStatus       @default(ACTIVE)
+  confidence  String
+  description String?
+  source      String?
+  tags        String[]        @default([])
+  malicious   Boolean         @default(true)
+  revoked     Boolean         @default(false)
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  enrichment        IOCEnrichment?
+  techniques        MitreTechnique[] @relation("IOCTechniques")
+  cves              CVE[]            @relation("CVEIOCs")
+  threatActors      ThreatActor[]    @relation("IOCActors")
+  campaigns         ThreatCampaign[] @relation("IOCCampaigns")
+  iocRelationships  IOCRelationship[]
+  threatRelationships ThreatRelationship[]
+
+  @@index([iocId])
+  @@index([severity])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("iocs")
+}
+
+model IOCRelationship {
+  id            String          @id @default(uuid()) @db.Uuid
+  iocId         String          @db.Uuid
+  cveId         String?         @db.Uuid
+  mitreId       String?         @db.Uuid
+  threatId      String?         @db.Uuid
+  campaignId    String?         @db.Uuid
+  targetType    String
+  relationType  RelationshipType
+  confidence    Float
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  ioc           IOC             @relation(fields: [iocId], references: [id], onDelete: Cascade)
+  cve           CVE?            @relation(fields: [cveId], references: [id], onDelete: Cascade)
+  mitreTechnique MitreTechnique? @relation(fields: [mitreId], references: [id], onDelete: Cascade)
+  threatActor   ThreatActor?    @relation(fields: [threatId], references: [id], onDelete: Cascade)
+  threatCampaign ThreatCampaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([iocId])
+  @@index([cveId])
+  @@index([mitreId])
+  @@index([threatId])
+  @@index([campaignId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("ioc_relationships")
+}
+
+model IOCEnrichment {
+  id              String          @id @default(uuid()) @db.Uuid
+  iocId           String          @unique @db.Uuid
+  reputationScore Int
+  malicious       Boolean
+  categories      String[]        @default([])
+  firstSeen       DateTime?
+  lastSeen        DateTime?
+  provider        String
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  ioc             IOC             @relation(fields: [iocId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("ioc_enrichments")
+}
+
+model ThreatActor {
+  id          String          @id @default(uuid()) @db.Uuid
+  threatId    String          @unique
+  name        String
+  aliases     String[]        @default([])
+  description String?
+  country     String?
+  motivation  String?
+  confidence  String
+  severity    ThreatLevel
+  status      ThreatStatus    @default(ACTIVE)
+  active      Boolean         @default(true)
+  malware     String[]        @default([])
+  industry    String[]        @default([])
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  campaigns         ThreatCampaign[] @relation("ActorCampaigns")
+  techniques        MitreTechnique[] @relation("ActorTechniques")
+  iocs              IOC[]            @relation("IOCActors")
+  threatRelationships ThreatRelationship[]
+  iocRelationships  IOCRelationship[]
+
+  @@index([threatId])
+  @@index([severity])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("threat_actors")
+}
+
+model ThreatCampaign {
+  id          String          @id @default(uuid()) @db.Uuid
+  campaignId  String          @unique
+  name        String
+  description String?
+  startDate   DateTime?
+  endDate     DateTime?
+  confidence  String
+  status      CampaignStatus  @default(ACTIVE)
+  active      Boolean         @default(true)
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  threatActors      ThreatActor[]    @relation("ActorCampaigns")
+  techniques        MitreTechnique[] @relation("CampaignTechniques")
+  iocs              IOC[]            @relation("IOCCampaigns")
+  threatRelationships ThreatRelationship[]
+  targetRelationships ThreatRelationship[] @relation("TargetCampaignRelation")
+  iocRelationships  IOCRelationship[]
+
+  @@index([campaignId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("threat_campaigns")
+}
+
+model ThreatRelationship {
+  id                String          @id @default(uuid()) @db.Uuid
+  threatId          String?         @db.Uuid
+  campaignId        String?         @db.Uuid
+  cveId             String?         @db.Uuid
+  mitreId           String?         @db.Uuid
+  iocId             String?         @db.Uuid
+  targetCampaignId  String?         @db.Uuid
+  targetType        String
+  relationType      RelationshipType
+  confidence        Float
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  threatActor       ThreatActor?    @relation(fields: [threatId], references: [id], onDelete: Cascade)
+  threatCampaign    ThreatCampaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  cve               CVE?            @relation(fields: [cveId], references: [id], onDelete: Cascade)
+  mitreTechnique    MitreTechnique? @relation(fields: [mitreId], references: [id], onDelete: Cascade)
+  ioc               IOC?            @relation(fields: [iocId], references: [id], onDelete: Cascade)
+  targetCampaign    ThreatCampaign? @relation("TargetCampaignRelation", fields: [targetCampaignId], references: [id], onDelete: Cascade)
+
+  @@index([threatId])
+  @@index([campaignId])
+  @@index([cveId])
+  @@index([mitreId])
+  @@index([iocId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("threat_relationships")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WORKFLOW MODELS (Phase A5.1.6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum PlaybookStatus {
+  DRAFT
+  ACTIVE
+  DEPRECATED
+  ARCHIVED
+}
+
+enum RuleStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+  ARCHIVED
+}
+
+enum AutomationStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+  ARCHIVED
+}
+
+enum AutomationExecutionStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  FAILED
+}
+
+enum CaseStatus {
+  OPEN
+  IN_PROGRESS
+  ON_HOLD
+  RESOLVED
+  CLOSED
+}
+
+enum CaseExecutionStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  FAILED
+}
+
+enum RuleSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum CasePriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AutomationTriggerType {
+  FINDING_CREATED
+  ALERT_CREATED
+  RULE_MATCHED
+  PLAYBOOK_SELECTED
+  TIMELINE_EVENT
+  MANUAL
+}
+
+enum StepType {
+  // Playbook Step Types
+  MANUAL
+  AUTOMATED
+  VERIFICATION
+  CONTAINMENT
+  ERADICATION
+  RECOVERY
+  
+  // Case Flow Step Types
+  CREATED
+  ASSIGNED
+  INVESTIGATED
+  RECOVERED
+  CLOSED
+  
+  // Automation Step Types (Actions)
+  CREATE_ALERT
+  CREATE_TIMELINE_EVENT
+  START_PLAYBOOK
+  UPDATE_FINDING
+  UPDATE_ALERT
+  TAG_INVESTIGATION
+}
+
+model Playbook {
+  id              String          @id @default(uuid()) @db.Uuid
+  projectId       String          @db.Uuid
+  investigationId String?         @db.Uuid
+  name            String
+  description     String?
+  severity        RuleSeverity
+  status          PlaybookStatus  @default(DRAFT)
+  confidence      Float           @default(100.0)
+  enabled         Boolean         @default(true)
+  priority        Int             @default(1)
+  category        String?
+  author          String?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation   Investigation?  @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  steps           PlaybookStep[]
+  automations     Automation[]
+  caseFlows       CaseFlow[]
+
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("playbooks")
+}
+
+model PlaybookStep {
+  id                String          @id @default(uuid()) @db.Uuid
+  playbookId        String          @db.Uuid
+  stepNumber        Int
+  stepKey           String
+  title             String
+  description       String?
+  stepType          StepType
+  expectedOutcome   String?
+  relatedTechniques String[]        @default([])
+  relatedCVEs       String[]        @default([])
+  relatedIOCs       String[]        @default([])
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  playbook        Playbook        @relation(fields: [playbookId], references: [id], onDelete: Cascade)
+
+  @@index([playbookId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("playbook_steps")
+}
+
+model Rule {
+  id              String          @id @default(uuid()) @db.Uuid
+  projectId       String          @db.Uuid
+  investigationId String?         @db.Uuid
+  name            String
+  description     String?
+  severity        RuleSeverity
+  status          RuleStatus      @default(DRAFT)
+  priority        Int             @default(100)
+  enabled         Boolean         @default(true)
+  category        String?
+  author          String?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation   Investigation?  @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  conditions      RuleCondition[]
+  actions         RuleAction[]
+  automations     Automation[]
+
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("rules")
+}
+
+model RuleCondition {
+  id              String          @id @default(uuid()) @db.Uuid
+  ruleId          String          @db.Uuid
+  field           String
+  operator        String
+  value           String
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  rule            Rule            @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("rule_conditions")
+}
+
+model RuleAction {
+  id              String          @id @default(uuid()) @db.Uuid
+  ruleId          String          @db.Uuid
+  actionType      String
+  parameters      Json?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  rule            Rule            @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("rule_actions")
+}
+
+model Automation {
+  id              String          @id @default(uuid()) @db.Uuid
+  projectId       String          @db.Uuid
+  investigationId String?         @db.Uuid
+  playbookId      String?         @db.Uuid
+  ruleId          String?         @db.Uuid
+  name            String
+  description     String?
+  status          AutomationStatus @default(DRAFT)
+  trigger         AutomationTriggerType
+  priority        Int             @default(100)
+  enabled         Boolean         @default(true)
+  category        String?
+  author          String?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation   Investigation?  @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  playbook        Playbook?       @relation(fields: [playbookId], references: [id], onDelete: SetNull)
+  rule            Rule?           @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  steps           AutomationStep[]
+  executions      AutomationExecution[]
+  caseFlows       CaseFlow[]
+
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([playbookId])
+  @@index([ruleId])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("automations")
+}
+
+model AutomationStep {
+  id              String          @id @default(uuid()) @db.Uuid
+  automationId    String          @db.Uuid
+  stepNumber      Int
+  stepKey         String
+  name            String
+  description     String?
+  action          StepType
+  parameters      Json?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  automation      Automation      @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("automation_steps")
+}
+
+model AutomationExecution {
+  id              String          @id @default(uuid()) @db.Uuid
+  automationId    String          @db.Uuid
+  status          AutomationExecutionStatus @default(PENDING)
+  startedAt       DateTime        @default(now())
+  completedAt     DateTime?
+  stepResults     Json?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  automation      Automation      @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("automation_executions")
+}
+
+model CaseFlow {
+  id              String          @id @default(uuid()) @db.Uuid
+  projectId       String          @db.Uuid
+  investigationId String          @db.Uuid
+  playbookId      String?         @db.Uuid
+  automationId    String?         @db.Uuid
+  title           String
+  description     String?
+  status          CaseStatus      @default(OPEN)
+  priority        CasePriority    @default(MEDIUM)
+  findingIds      String[]        @default([])
+  alertIds        String[]        @default([])
+  evidenceIds     String[]        @default([])
+  playbookIds     String[]        @default([])
+  assignedTo      String?
+  owner           String?
+  confidence      Float           @default(100.0)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation   Investigation   @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  playbook        Playbook?       @relation(fields: [playbookId], references: [id], onDelete: SetNull)
+  automation      Automation?     @relation(fields: [automationId], references: [id], onDelete: SetNull)
+  steps           CaseFlowStep[]
+  executions      CaseFlowExecution[]
+
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([playbookId])
+  @@index([automationId])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("case_flows")
+}
+
+model CaseFlowStep {
+  id              String          @id @default(uuid()) @db.Uuid
+  caseFlowId      String          @db.Uuid
+  stepNumber      Int
+  stepKey         String
+  stepType        StepType
+  title           String
+  description     String?
+  assignedTo      String?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  caseFlow        CaseFlow        @relation(fields: [caseFlowId], references: [id], onDelete: Cascade)
+
+  @@index([caseFlowId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("case_flow_steps")
+}
+
+model CaseFlowExecution {
+  id              String          @id @default(uuid()) @db.Uuid
+  caseFlowId      String          @db.Uuid
+  status          CaseExecutionStatus @default(PENDING)
+  startedAt       DateTime        @default(now())
+  completedAt     DateTime?
+  stepResults     Json?
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  caseFlow        CaseFlow        @relation(fields: [caseFlowId], references: [id], onDelete: Cascade)
+
+  @@index([caseFlowId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("case_flow_executions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED MODELS (Phase A5.1.7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum NotificationStatus {
+  READ
+  UNREAD
+  ARCHIVED
+}
+
+enum NotificationType {
+  SYSTEM
+  ALERT
+  TASK
+  MENTION
+  COMMENT
+}
+
+enum AttachmentType {
+  FILE
+  IMAGE
+  PDF
+  LOG
+  PCAP
+  OTHER
+}
+
+enum AttachmentStatus {
+  ACTIVE
+  DELETED
+  PENDING
+}
+
+enum CommentVisibility {
+  PUBLIC
+  PRIVATE
+  TEAM
+}
+
+enum PreferenceType {
+  THEME
+  NOTIFICATIONS
+  DASHBOARD
+  GENERAL
+}
+
+enum ActivityType {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  EXECUTE
+  OTHER
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum SettingScope {
+  GLOBAL
+  PROJECT
+  USER
+}
+
+enum FavoriteType {
+  PROJECT
+  INVESTIGATION
+  PLAYBOOK
+  RULE
+  AUTOMATION
+  CASE_FLOW
+}
+
+model Tag {
+  id          String          @id @default(uuid()) @db.Uuid
+  projectId   String          @db.Uuid
+  name        String
+  color       String?
+  description String?
+
+  // Common fields
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int             @default(1)
+  metadata    Json?
+
+  // Relations
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  assignments TagAssignment[]
+
+  @@unique([projectId, name])
+  @@index([projectId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("tags")
+}
+
+model TagAssignment {
+  id              String          @id @default(uuid()) @db.Uuid
+  tagId           String          @db.Uuid
+  investigationId String?         @db.Uuid
+  targetId        String          @db.Uuid
+  targetType      String
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  tag             Tag             @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  investigation   Investigation?  @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+
+  @@unique([tagId, targetId, targetType])
+  @@index([investigationId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("tag_assignments")
+}
+
+model Comment {
+  id              String          @id @default(uuid()) @db.Uuid
+  userId          String          @db.Uuid
+  projectId       String          @db.Uuid
+  investigationId String?         @db.Uuid
+  targetId        String?         @db.Uuid
+  targetType      String?
+  content         String
+  visibility      CommentVisibility @default(PUBLIC)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation   Investigation?  @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("comments")
+}
+
+model Attachment {
+  id              String          @id @default(uuid()) @db.Uuid
+  projectId       String          @db.Uuid
+  investigationId String?         @db.Uuid
+  targetId        String?         @db.Uuid
+  targetType      String?
+  fileName        String
+  fileSize        Int
+  mimeType        String
+  storageKey      String
+  type            AttachmentType
+  status          AttachmentStatus @default(ACTIVE)
+
+  // Common fields
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int             @default(1)
+  metadata        Json?
+
+  // Relations
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: NoAction)
+  investigation   Investigation?  @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("attachments")
+}
+
+model Favorite {
+  id          String       @id @default(uuid()) @db.Uuid
+  userId      String       @db.Uuid
+  targetId    String       @db.Uuid
+  type        FavoriteType
+
+  // Common fields
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int          @default(1)
+  metadata    Json?
+
+  // Relations
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, targetId, type])
+  @@index([type])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("favorites")
+}
+
+model Notification {
+  id          String             @id @default(uuid()) @db.Uuid
+  userId      String             @db.Uuid
+  title       String
+  message     String
+  type        NotificationType
+  status      NotificationStatus @default(UNREAD)
+  readAt      DateTime?
+
+  // Common fields
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int                @default(1)
+  metadata    Json?
+
+  // Relations
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("notifications")
+}
+
+model UserPreference {
+  id          String         @id @default(uuid()) @db.Uuid
+  userId      String         @db.Uuid
+  key         String
+  value       String
+  type        PreferenceType @default(GENERAL)
+
+  // Common fields
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int            @default(1)
+  metadata    Json?
+
+  // Relations
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([type])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("user_preferences")
+}
+
+model ActivityLog {
+  id              String       @id @default(uuid()) @db.Uuid
+  userId          String       @db.Uuid
+  projectId       String?      @db.Uuid
+  investigationId String?      @db.Uuid
+  action          String
+  type            ActivityType
+  details         String?
+
+  // Common fields
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int          @default(1)
+  metadata        Json?
+
+  // Relations
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project         Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  investigation   Investigation? @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([investigationId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("activity_logs")
+}
+
+model SystemSetting {
+  id          String       @id @default(uuid()) @db.Uuid
+  key         String       @unique
+  value       String
+  scope       SettingScope @default(GLOBAL)
+  description String?
+
+  // Common fields
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int          @default(1)
+  metadata    Json?
+
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("system_settings")
+}
+
+model ApiKey {
+  id          String       @id @default(uuid()) @db.Uuid
+  userId      String       @db.Uuid
+  name        String
+  keyHash     String       @unique
+  status      ApiKeyStatus @default(ACTIVE)
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+
+  // Common fields
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+  createdBy   String
+  updatedBy   String
+  version     Int          @default(1)
+  metadata    Json?
+
+  // Relations
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("api_keys")
+}
+
+
+
