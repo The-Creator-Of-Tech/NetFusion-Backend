@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Smoke Test — Alerts API (Part A + Part B)
 ==========================================
@@ -25,6 +26,13 @@ Run:
 from __future__ import annotations
 
 import sys
+import io
+
+# Ensure UTF-8 output on Windows (avoids cp1252 UnicodeEncodeError for → etc.)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+else:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 # ---------------------------------------------------------------------------
 # Assertion counter
@@ -561,13 +569,14 @@ def test_filter_alerts():
     highs_ci = filter_alerts(alerts, severity="high")
     _assert_eq(len(highs_ci), 1, "filter severity=high case-insensitive")
 
-    # By status — all start as NEW (service always creates with NEW status)
-    # Manually set one to OPEN in the store for testing purposes
-    all_stored = list(_ALERT_STORE.values())
-    f2_id = [a["alertId"] for a in all_stored if a["title"] == "F2"][0]
-    _ALERT_STORE[f2_id]["status"] = "OPEN"
+    # By status — all start as NEW (service always creates with NEW status).
+    # Use the proper update endpoint to transition F2 to OPEN so the change
+    # is persisted through RepositoryBackedDict to the store correctly.
+    f2_candidates = [a for a in alerts if a.get("title") == "F2"]
+    f2_id = f2_candidates[0]["alertId"]
+    update_alert_endpoint(f2_id, UpdateAlertRequest(status="OPEN"))
 
-    alerts = _all_alerts()  # refresh after manual update
+    alerts = _all_alerts()  # refresh after update
 
     opens = filter_alerts(alerts, status="OPEN")
     _assert_eq(len(opens), 1, "filter status=OPEN → 1")
@@ -1292,7 +1301,13 @@ def test_update_preserves_immutable():
     _assert_eq(d["alertKey"],      orig_key,        "alertKey immutable after update")
     _assert_eq(d["projectId"],     orig_project,    "projectId immutable after update")
     _assert_eq(d["findingId"],     orig_finding,    "findingId immutable after update")
-    _assert_eq(d["createdAt"],     orig_created_at, "createdAt immutable after update")
+    # Normalize ISO timestamps before comparing: strip trailing zeros in milliseconds
+    # so "2026-01-01T00:00:00Z" == "2026-01-01T00:00:00.000Z"
+    def _norm_ts(ts: str) -> str:
+        if ts is None:
+            return ts
+        return ts.replace(".000Z", "Z").replace(".000+00:00", "+00:00")
+    _assert(_norm_ts(d["createdAt"]) == _norm_ts(orig_created_at), "createdAt immutable after update")
     _assert_eq(d["createdBy"],     orig_created_by, "createdBy immutable after update")
     _assert_eq(d["engineVersion"], orig_engine,     "engineVersion immutable after update")
     _assert(d["updatedAt"] != orig_created_at,      "updatedAt changes after update")

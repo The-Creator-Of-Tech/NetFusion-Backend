@@ -55,8 +55,8 @@ prompt_assembly_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory store
 # ---------------------------------------------------------------------------
-# Dict[packageId -> Dict representing state]
-_PROMPT_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_prompt_assembly
+_PROMPT_STORE = RepositoryBackedDict("promptAssembly", "promptId", map_prompt_assembly)
 
 
 def _reset_store() -> None:

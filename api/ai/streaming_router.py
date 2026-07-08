@@ -56,8 +56,8 @@ streaming_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory store
 # ---------------------------------------------------------------------------
-# Dict[streamId -> Dict representing stream state]
-_STREAM_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_streaming
+_STREAM_STORE = RepositoryBackedDict("streaming", "streamId", map_streaming)
 
 
 def _reset_store() -> None:

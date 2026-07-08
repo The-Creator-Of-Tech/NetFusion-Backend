@@ -85,8 +85,8 @@ evidence_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory placeholder store
 # ---------------------------------------------------------------------------
-# Dict[evidenceId -> evidence dict]   — module-level; replaced by repository later.
-_EVIDENCE_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_evidence
+_EVIDENCE_STORE = RepositoryBackedDict("evidence", "evidenceId", map_evidence)
 
 
 def _reset_store() -> None:

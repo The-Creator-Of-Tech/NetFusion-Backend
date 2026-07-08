@@ -58,11 +58,9 @@ automation_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-Memory Store
 # ---------------------------------------------------------------------------
-# Dict[automationId -> Automation dict]
-_AUTOMATION_STORE: Dict[str, Dict[str, Any]] = {}
-
-# Dict[automationId -> List[Execution dict]]
-_EXECUTION_STORE: Dict[str, List[Dict[str, Any]]] = {}
+from api.persistence import RepositoryBackedDict, AutomationExecutionsStore, map_automation
+_AUTOMATION_STORE = RepositoryBackedDict("automation", "automationId", map_automation)
+_EXECUTION_STORE = AutomationExecutionsStore()
 
 
 def _reset_store() -> None:

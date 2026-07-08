@@ -91,8 +91,8 @@ timeline_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory placeholder store
 # ---------------------------------------------------------------------------
-# Dict[eventId -> event dict]   — module-level; replaced by repository later.
-_TIMELINE_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_timeline_event
+_TIMELINE_STORE = RepositoryBackedDict("timeline", "eventId", map_timeline_event)
 
 
 def _reset_store() -> None:

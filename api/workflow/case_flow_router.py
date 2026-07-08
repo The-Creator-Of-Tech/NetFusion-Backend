@@ -58,11 +58,9 @@ case_flow_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-Memory Store
 # ---------------------------------------------------------------------------
-# Dict[caseFlowId -> Case dict]
-_CASE_FLOW_STORE: Dict[str, Dict[str, Any]] = {}
-
-# Dict[caseFlowId -> List[Execution dict]]
-_EXECUTION_STORE: Dict[str, List[Dict[str, Any]]] = {}
+from api.persistence import RepositoryBackedDict, CaseFlowExecutionsStore, map_case_flow
+_CASE_FLOW_STORE = RepositoryBackedDict("caseFlow", "caseFlowId", map_case_flow)
+_EXECUTION_STORE = CaseFlowExecutionsStore()
 
 
 def _reset_store() -> None:

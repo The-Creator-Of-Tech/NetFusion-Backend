@@ -59,8 +59,8 @@ context_window_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory store
 # ---------------------------------------------------------------------------
-# Dict[windowId -> Dict representing state]
-_CONTEXT_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_context_window
+_CONTEXT_STORE = RepositoryBackedDict("contextWindow", "contextId", map_context_window)
 
 
 def _reset_store() -> None:

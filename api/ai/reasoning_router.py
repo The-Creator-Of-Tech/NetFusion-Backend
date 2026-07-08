@@ -57,8 +57,8 @@ reasoning_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory store
 # ---------------------------------------------------------------------------
-# Dict[reasoningId -> Dict representing state]
-_REASONING_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_reasoning
+_REASONING_STORE = RepositoryBackedDict("reasoning", "reasoningId", map_reasoning)
 
 
 def _reset_store() -> None:

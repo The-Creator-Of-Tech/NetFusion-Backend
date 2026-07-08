@@ -51,8 +51,8 @@ ioc_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-Memory Store
 # ---------------------------------------------------------------------------
-# Dict[iocId -> IOC dict]
-_IOC_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_ioc
+_IOC_STORE = RepositoryBackedDict("ioc", "iocId", map_ioc)
 
 
 def _reset_store() -> None:

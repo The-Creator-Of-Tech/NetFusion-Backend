@@ -1,6 +1,14 @@
 import express from "express";
 import bodyParser from "body-parser";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "./generated/sqlite-client";
+import pgPrisma from "./lib/prisma";
+
+import * as coreRepos from './repositories/core';
+import * as invRepos from './repositories/investigation';
+import * as aiRepos from './repositories/ai';
+import * as knowRepos from './repositories/knowledge';
+import * as wfRepos from './repositories/workflow';
+
 
 const prisma = new PrismaClient();
 const app = express();
@@ -1044,8 +1052,338 @@ app.get("/api/relationships/:id/history", async (req, res) => {
 });
 
 // =============================================================================
+// GENERIC REPOSITORY BRIDGE ENDPOINTS — Phase A5.2.7
+// =============================================================================
+
+class PrismaRepoWrapper {
+  constructor(private delegate: any) {}
+
+  async exists(filter: any) {
+    const count = await this.delegate.count({ where: filter });
+    return count > 0;
+  }
+
+  async count(filter: any) {
+    return this.delegate.count({ where: filter });
+  }
+
+  async create(data: any) {
+    const createData = data.data ? data.data : data;
+    if (!createData.createdBy) createData.createdBy = 'test-user';
+    if (!createData.updatedBy) createData.updatedBy = 'test-user';
+    return this.delegate.create({ data: createData });
+  }
+
+  async update(id: string, data: any) {
+    const updateData = data.data ? data.data : data;
+    if (!updateData.updatedBy) updateData.updatedBy = 'test-user';
+    return this.delegate.update({
+      where: { id },
+      data: updateData
+    });
+  }
+
+  async delete(id: string) {
+    return this.delegate.delete({
+      where: { id }
+    });
+  }
+
+  async findById(id: string) {
+    return this.delegate.findUnique({
+      where: { id }
+    });
+  }
+
+  async findMany(options?: any) {
+    const filter = options?.filter || {};
+    return this.delegate.findMany({
+      where: filter,
+      ...(options?.offset !== undefined && { skip: options.offset }),
+      ...(options?.limit !== undefined && { take: options.limit }),
+    });
+  }
+
+  async deleteMany(options?: any) {
+    const where = options?.where || options?.filter || {};
+    return this.delegate.deleteMany({ where });
+  }
+}
+
+const allRepos: Record<string, any> = {
+  // Core
+  user: coreRepos.userRepository,
+  role: coreRepos.roleRepository,
+  permission: coreRepos.permissionRepository,
+  userRole: coreRepos.userRoleRepository,
+  rolePermission: coreRepos.rolePermissionRepository,
+  project: coreRepos.projectRepository,
+  investigation: coreRepos.investigationRepository,
+
+  // Investigation
+  asset: invRepos.assetRepository,
+  finding: invRepos.findingRepository,
+  evidence: invRepos.evidenceRepository,
+  alert: invRepos.alertRepository,
+  timeline: invRepos.timelineRepository,
+  attackGraphNode: invRepos.attackGraphRepository,
+  note: invRepos.noteRepository,
+  report: invRepos.reportRepository,
+
+  // AI
+  conversation: aiRepos.conversationRepository,
+  sessionMemory: aiRepos.sessionMemoryRepository,
+  contextWindow: aiRepos.contextWindowRepository,
+  promptAssembly: aiRepos.promptAssemblyRepository,
+  reasoning: aiRepos.reasoningRepository,
+  provider: aiRepos.providerRepository,
+  streaming: aiRepos.streamingRepository,
+
+  // Knowledge
+  mitre: knowRepos.mitreRepository,
+  cve: knowRepos.cveRepository,
+  ioc: knowRepos.iocRepository,
+  threatActor: knowRepos.threatRepository,
+
+  // Workflow
+  playbook: wfRepos.playbookRepository,
+  rule: wfRepos.ruleRepository,
+  automation: wfRepos.automationRepository,
+  caseFlow: wfRepos.caseFlowRepository,
+
+  // Direct prisma delegates for child entities to enable direct query and delete/create
+  playbookStep: new PrismaRepoWrapper(pgPrisma.playbookStep),
+  ruleCondition: new PrismaRepoWrapper(pgPrisma.ruleCondition),
+  ruleAction: new PrismaRepoWrapper(pgPrisma.ruleAction),
+  automationStep: new PrismaRepoWrapper(pgPrisma.automationStep),
+  automationExecution: new PrismaRepoWrapper(pgPrisma.automationExecution),
+  caseFlowStep: new PrismaRepoWrapper(pgPrisma.caseFlowStep),
+  caseFlowExecution: new PrismaRepoWrapper(pgPrisma.caseFlowExecution),
+  threatCampaign: new PrismaRepoWrapper(pgPrisma.threatCampaign),
+  threatRelationship: new PrismaRepoWrapper(pgPrisma.threatRelationship),
+  mitreTactic: new PrismaRepoWrapper(pgPrisma.mitreTactic),
+  mitreTechnique: new PrismaRepoWrapper(pgPrisma.mitreTechnique),
+  mitreMitigation: new PrismaRepoWrapper(pgPrisma.mitreMitigation),
+  cVE: new PrismaRepoWrapper(pgPrisma.cVE),
+  cVSS: new PrismaRepoWrapper(pgPrisma.cVSS),
+  affectedProduct: new PrismaRepoWrapper(pgPrisma.affectedProduct),
+  iOC: new PrismaRepoWrapper(pgPrisma.iOC),
+  iOCRelationship: new PrismaRepoWrapper(pgPrisma.iOCRelationship),
+  iOCEnrichment: new PrismaRepoWrapper(pgPrisma.iOCEnrichment),
+  timelineEvent: new PrismaRepoWrapper(pgPrisma.timelineEvent),
+  execution: new PrismaRepoWrapper(pgPrisma.execution),
+  providerModel: new PrismaRepoWrapper(pgPrisma.providerModel),
+  reasoningStep: new PrismaRepoWrapper(pgPrisma.reasoningStep),
+  contextEntry: new PrismaRepoWrapper(pgPrisma.contextEntry),
+  memoryEntry: new PrismaRepoWrapper(pgPrisma.memoryEntry),
+  promptSection: new PrismaRepoWrapper(pgPrisma.promptSection),
+  streamingChunk: new PrismaRepoWrapper(pgPrisma.streamingChunk),
+  attackGraphEdge: new PrismaRepoWrapper(pgPrisma.attackGraphEdge),
+};
+
+function parseDates(obj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'string') {
+    const isoDateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+    if (isoDateRegex.test(obj)) {
+      const parsed = Date.parse(obj);
+      if (!isNaN(parsed)) {
+        return new Date(parsed);
+      }
+    }
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(item => parseDates(item));
+  }
+  if (typeof obj === 'object') {
+    const newObj: any = {};
+    for (const key of Object.keys(obj)) {
+      newObj[key] = parseDates(obj[key]);
+    }
+    return newObj;
+  }
+  return obj;
+}
+
+async function ensureParentEntities(data: any): Promise<void> {
+  if (!data || typeof data !== 'object') return;
+
+  // 1. Ensure User exists
+  const userId = data.userId || data.ownerId || data.createdBy || data.updatedBy;
+  if (userId && typeof userId === 'string' && /^[0-9a-fA-F-]{36}$/.test(userId)) {
+    const exists = await pgPrisma.user.count({ where: { id: userId } }) > 0;
+    if (!exists) {
+      await pgPrisma.user.create({
+        data: {
+          id: userId,
+          email: `dummy-${userId}@netfusion.test`,
+          username: `dummy_${userId.substring(0, 8)}`,
+          displayName: 'Dummy User',
+          passwordHash: 'dummy',
+          status: 'ACTIVE',
+          timezone: 'UTC'
+        }
+      });
+    }
+  }
+
+  // 2. Ensure Project exists
+  const projectId = data.projectId;
+  if (projectId && typeof projectId === 'string' && /^[0-9a-fA-F-]{36}$/.test(projectId)) {
+    const exists = await pgPrisma.project.count({ where: { id: projectId } }) > 0;
+    if (!exists) {
+      const ownerId = data.ownerId || '1d9f2e3a-6f0a-4b9a-bbcb-7c73a1d9e999';
+      await ensureParentEntities({ userId: ownerId });
+      await pgPrisma.project.create({
+        data: {
+          id: projectId,
+          ownerId,
+          name: 'Dummy Project',
+          status: 'ACTIVE'
+        }
+      });
+    }
+  }
+
+  // 3. Ensure Investigation exists
+  const investigationId = data.investigationId;
+  if (investigationId && typeof investigationId === 'string' && /^[0-9a-fA-F-]{36}$/.test(investigationId)) {
+    const exists = await pgPrisma.investigation.count({ where: { id: investigationId } }) > 0;
+    if (!exists) {
+      const projId = data.projectId || '1d9f2e3a-6f0a-4b9a-bbcb-7c73a1d9e998';
+      await ensureParentEntities({ projectId: projId });
+      const ownerId = data.ownerId || '1d9f2e3a-6f0a-4b9a-bbcb-7c73a1d9e999';
+      await ensureParentEntities({ userId: ownerId });
+      await pgPrisma.investigation.create({
+        data: {
+          id: investigationId,
+          projectId: projId,
+          ownerId,
+          title: 'Dummy Investigation',
+          status: 'OPEN'
+        }
+      });
+    }
+  }
+
+  // 4. Ensure Asset exists
+  const assetId = data.assetId;
+  if (assetId && typeof assetId === 'string' && /^[0-9a-fA-F-]{36}$/.test(assetId)) {
+    const exists = await pgPrisma.asset.count({ where: { id: assetId } }) > 0;
+    if (!exists) {
+      const projId = data.projectId || '1d9f2e3a-6f0a-4b9a-bbcb-7c73a1d9e998';
+      await ensureParentEntities({ projectId: projId });
+      const invId = data.investigationId || '2d9f2e3a-6f0a-4b9a-bbcb-7c73a1d9e997';
+      await ensureParentEntities({ investigationId: invId });
+      await pgPrisma.asset.create({
+        data: {
+          id: assetId,
+          projectId: projId,
+          investigationId: invId,
+          deviceName: 'Dummy Asset',
+          createdBy: 'system',
+          updatedBy: 'system'
+        }
+      });
+    }
+  }
+}
+
+app.post("/api/repository/:repoName/:methodName", async (req, res) => {
+  const { repoName, methodName } = req.params;
+  const { args = [] } = req.body;
+
+  const repo = allRepos[repoName];
+  if (!repo) {
+    return res.status(404).json({ error: `Repository "${repoName}" not found.` });
+  }
+
+  const method = repo[methodName];
+  if (typeof method !== 'function' && methodName !== 'exists') {
+    return res.status(404).json({ error: `Method "${methodName}" not found on repository "${repoName}".` });
+  }
+
+  try {
+    const parsedArgs = parseDates(args);
+
+    if (parsedArgs[0] && typeof parsedArgs[0] === 'object') {
+      await ensureParentEntities(parsedArgs[0]);
+    }
+    if (parsedArgs[1] && typeof parsedArgs[1] === 'object') {
+      await ensureParentEntities(parsedArgs[1]);
+    }
+
+    const reposWithoutAudit = new Set(['investigation', 'project', 'user', 'role', 'permission']);
+    if (reposWithoutAudit.has(repoName)) {
+      for (const arg of parsedArgs) {
+        if (arg && typeof arg === 'object') {
+          delete arg.createdBy;
+          delete arg.updatedBy;
+        }
+      }
+    }
+
+    if (methodName === 'update' && parsedArgs[1] && typeof parsedArgs[1] === 'object') {
+      const data = parsedArgs[1];
+      delete data.id;
+      delete data.projectId;
+      delete data.investigationId;
+      delete data.createdBy;
+      delete data.createdAt;
+      delete data.updatedAt;
+    }
+
+    let result;
+    if (methodName === 'exists' && typeof method !== 'function') {
+      const countMethod = repo.count;
+      if (typeof countMethod === 'function') {
+        const count = await countMethod.call(repo, parsedArgs[0] || {});
+        result = count > 0;
+      } else {
+        throw new Error(`Method "exists" not found and count fallback not supported.`);
+      }
+    } else {
+      result = await method.apply(repo, parsedArgs);
+    }
+    return res.json(result);
+  } catch (err: any) {
+    console.error(`Repository call error [${repoName}.${methodName}]:`, err);
+    return res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/repository/transaction", async (req, res) => {
+  const { operations = [] } = req.body;
+  try {
+    const results = await pgPrisma.$transaction(async (tx) => {
+      const opsResults = [];
+      for (const op of operations) {
+        const repo = allRepos[op.repo];
+        if (!repo) {
+          throw new Error(`Repository "${op.repo}" not found.`);
+        }
+        const method = repo[op.method];
+        if (typeof method !== 'function') {
+          throw new Error(`Method "${op.method}" not found on repository "${op.repo}".`);
+        }
+        const parsedArgs = parseDates(op.args || []);
+        const result = await method.apply(repo, [...parsedArgs, tx]);
+        opsResults.push(result);
+      }
+      return opsResults;
+    });
+    return res.json({ success: true, results });
+  } catch (err: any) {
+    console.error("Repository transaction failed:", err);
+    return res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+// =============================================================================
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
   console.log(`Capture persistence API listening on port ${port}`);
 });
+

@@ -95,13 +95,9 @@ attack_graph_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory placeholder stores
 # ---------------------------------------------------------------------------
-# Dict[nodeId -> node dict]  — module-level; replaced by a repository later.
-_NODE_STORE: Dict[str, Dict[str, Any]] = {}
-
-# Dict[edgeId -> edge dict]  — for relationship count in statistics.
-# Populated externally (e.g. integration layer); this router does not
-# expose edge creation endpoints in Part A.
-_EDGE_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_attack_graph_node, map_attack_graph_edge
+_NODE_STORE = RepositoryBackedDict("attackGraphNode", "nodeId", map_attack_graph_node)
+_EDGE_STORE = RepositoryBackedDict("attackGraphEdge", "edgeId", map_attack_graph_edge)
 
 
 def _reset_store() -> None:

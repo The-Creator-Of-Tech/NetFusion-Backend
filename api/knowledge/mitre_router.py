@@ -52,8 +52,8 @@ mitre_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-Memory Store
 # ---------------------------------------------------------------------------
-# Dict[techniqueId -> technique dict]
-_TECHNIQUE_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_mitre_technique
+_TECHNIQUE_STORE = RepositoryBackedDict("mitre", "mitreId", map_mitre_technique)
 
 
 def _reset_store() -> None:

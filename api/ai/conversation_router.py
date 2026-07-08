@@ -62,8 +62,8 @@ conversation_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory store
 # ---------------------------------------------------------------------------
-# Dict[conversationId -> Dict representing session state]
-_CONVERSATION_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_conversation
+_CONVERSATION_STORE = RepositoryBackedDict("conversation", "conversationId", map_conversation)
 
 
 def _reset_store() -> None:

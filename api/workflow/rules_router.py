@@ -59,8 +59,8 @@ rules_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-Memory Store
 # ---------------------------------------------------------------------------
-# Dict[ruleId -> Rule dict]
-_RULE_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_rule
+_RULE_STORE = RepositoryBackedDict("rule", "ruleId", map_rule)
 
 
 def _reset_store() -> None:

@@ -95,8 +95,8 @@ finding_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory placeholder store
 # ---------------------------------------------------------------------------
-# Dict[findingId -> finding dict]  — module-level; replaced by a repository later.
-_FINDING_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_finding
+_FINDING_STORE = RepositoryBackedDict("finding", "findingId", map_finding)
 
 
 def _reset_store() -> None:

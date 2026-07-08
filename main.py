@@ -74,6 +74,9 @@ client = Groq(api_key=GROQ_API_KEY)
 
 app = FastAPI()
 
+from api.router import root_router
+app.include_router(root_router)
+
 # Capture lifecycle state is now managed inside services/capture_service.py
 
 

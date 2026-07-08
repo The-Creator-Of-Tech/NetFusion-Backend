@@ -94,8 +94,8 @@ asset_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory placeholder store
 # ---------------------------------------------------------------------------
-# Dict[assetId -> asset dict]   — module-level; replaced by a repository later.
-_ASSET_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_asset
+_ASSET_STORE = RepositoryBackedDict("asset", "assetId", map_asset)
 
 
 def _reset_store() -> None:

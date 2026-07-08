@@ -55,8 +55,8 @@ copilot_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory store
 # ---------------------------------------------------------------------------
-# Dict[sessionId -> session dict]
-_COPILOT_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_copilot_session
+_COPILOT_STORE = RepositoryBackedDict("sessionMemory", "sessionId", map_copilot_session)
 
 
 def _reset_store() -> None:

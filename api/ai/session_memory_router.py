@@ -61,8 +61,8 @@ session_memory_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory store
 # ---------------------------------------------------------------------------
-# Dict[sessionId -> Dict representing state]
-_MEMORY_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_session_memory
+_MEMORY_STORE = RepositoryBackedDict("sessionMemory", "memoryId", map_session_memory)
 
 
 def _reset_store() -> None:

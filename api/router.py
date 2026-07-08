@@ -48,20 +48,7 @@ from api.investigation.finding_router import finding_router
 # Each is an empty placeholder; endpoints are added in Part B and beyond.
 # ---------------------------------------------------------------------------
 
-investigation_router: APIRouter = APIRouter(
-    prefix = "/investigation",
-    tags   = ["Investigation"],
-)
-"""
-Investigation domain router.
-
-Planned endpoints (Part B+):
-  GET    /investigation/{project_id}/findings
-  GET    /investigation/{project_id}/alerts
-  GET    /investigation/{project_id}/timeline
-  GET    /investigation/{project_id}/attack-graph
-  POST   /investigation/{project_id}/analyze
-"""
+from api.investigation.investigation_router import investigation_router
 
 ai_router: APIRouter = APIRouter(
     prefix = "/ai",
@@ -234,6 +221,38 @@ def get_version() -> APIResponse:
 
 
 # ---------------------------------------------------------------------------
+# Setup sub-routers and their dependencies first
+# ---------------------------------------------------------------------------
+
+from api.ai.provider_registry_router import provider_registry_router
+ai_router.include_router(provider_registry_router)
+
+from api.ai.streaming_router import streaming_router
+ai_router.include_router(streaming_router)
+
+from api.ai.conversation_router import conversation_router
+ai_router.include_router(conversation_router)
+
+from api.ai.session_memory_router import session_memory_router
+ai_router.include_router(session_memory_router)
+
+from api.ai.context_window_router import context_window_router
+ai_router.include_router(context_window_router)
+
+from api.ai.prompt_assembly_router import prompt_assembly_router
+ai_router.include_router(prompt_assembly_router)
+
+from api.ai.reasoning_router import reasoning_router
+ai_router.include_router(reasoning_router)
+
+from api.ai.execution_router import execution_router
+ai_router.include_router(execution_router)
+
+from api.ai.copilot_router import copilot_router
+ai_router.include_router(copilot_router)
+
+
+# ---------------------------------------------------------------------------
 # Root router — aggregates all sub-routers under /api/v2
 # ---------------------------------------------------------------------------
 
@@ -250,9 +269,9 @@ root_router.include_router(attack_graph_router)
 root_router.include_router(finding_router)
 root_router.include_router(alert_router)
 
-from api.ai.provider_registry_router import provider_registry_router
-ai_router.include_router(provider_registry_router)
+from api.investigation.timeline_router import timeline_router
+root_router.include_router(timeline_router)
 
-from api.ai.streaming_router import streaming_router
-ai_router.include_router(streaming_router)
+from api.investigation.evidence_router import evidence_router
+root_router.include_router(evidence_router)
 

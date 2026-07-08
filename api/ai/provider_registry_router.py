@@ -69,8 +69,8 @@ provider_registry_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory store
 # ---------------------------------------------------------------------------
-# Dict[providerId -> Dict representing state]
-_PROVIDER_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_provider
+_PROVIDER_STORE = RepositoryBackedDict("provider", "providerId", map_provider)
 
 
 def _bootstrap_store() -> None:

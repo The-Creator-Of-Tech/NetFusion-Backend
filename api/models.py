@@ -19,9 +19,18 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 
 from core.constants import API_LAYER_VERSION
+
+
+class DictAttributeWrapper(dict):
+    def __getattr__(self, name):
+        if name in self:
+            return self[name]
+        raise AttributeError(f"'DictAttributeWrapper' object has no attribute '{name}'")
+    def __setattr__(self, name, value):
+        self[name] = value
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +62,12 @@ class APIResponse(BaseModel):
     data      : Optional[Any]             = None
     metadata  : Optional[Dict[str, Any]]  = None
     timestamp : Optional[str]             = None
+
+    @validator("data", pre=True, always=True)
+    def wrap_data(cls, v):
+        if isinstance(v, dict):
+            return DictAttributeWrapper(v)
+        return v
 
     class Config:
         frozen = True

@@ -51,11 +51,9 @@ threat_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-Memory Store
 # ---------------------------------------------------------------------------
-# Dict[threatId -> Threat dict] (Threat Actor)
-_THREAT_STORE: Dict[str, Dict[str, Any]] = {}
-
-# Dict[campaignId -> Campaign dict]
-_CAMPAIGN_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_threat_actor, map_threat_campaign
+_THREAT_STORE = RepositoryBackedDict("threatActor", "threatId", map_threat_actor)
+_CAMPAIGN_STORE = RepositoryBackedDict("threatCampaign", "campaignId", map_threat_campaign)
 
 
 def _reset_store() -> None:

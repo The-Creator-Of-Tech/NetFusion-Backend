@@ -52,8 +52,8 @@ cve_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-Memory Store
 # ---------------------------------------------------------------------------
-# Dict[recordId -> CVE dict]
-_CVE_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_cve
+_CVE_STORE = RepositoryBackedDict("cve", "cveId", map_cve)
 
 
 def _reset_store() -> None:

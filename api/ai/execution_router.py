@@ -57,8 +57,8 @@ execution_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory store
 # ---------------------------------------------------------------------------
-# Dict[executionId -> Dict representing state]
-_EXECUTION_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_execution
+_EXECUTION_STORE = RepositoryBackedDict("execution", "executionId", map_execution)
 
 
 def _reset_store() -> None:

@@ -94,8 +94,8 @@ alert_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-memory placeholder store
 # ---------------------------------------------------------------------------
-# Dict[alertId -> alert dict]  — module-level; replaced by a repository later.
-_ALERT_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_alert
+_ALERT_STORE = RepositoryBackedDict("alert", "alertId", map_alert)
 
 
 def _reset_store() -> None:

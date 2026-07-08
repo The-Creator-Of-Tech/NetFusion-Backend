@@ -52,8 +52,8 @@ playbook_router: APIRouter = APIRouter(
 # ---------------------------------------------------------------------------
 # In-Memory Store
 # ---------------------------------------------------------------------------
-# Dict[playbookId -> Playbook dict]
-_PLAYBOOK_STORE: Dict[str, Dict[str, Any]] = {}
+from api.persistence import RepositoryBackedDict, map_playbook
+_PLAYBOOK_STORE = RepositoryBackedDict("playbook", "playbookId", map_playbook)
 
 
 def _reset_store() -> None:
