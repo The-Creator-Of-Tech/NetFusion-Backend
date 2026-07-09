@@ -1,0 +1,18 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.permissionService = exports.roleService = exports.userService = exports.investigationService = exports.projectService = exports.PermissionService = exports.RoleService = exports.UserService = exports.InvestigationService = exports.ProjectService = void 0;
+const project_service_1 = require("./project.service");
+Object.defineProperty(exports, "ProjectService", { enumerable: true, get: function () { return project_service_1.ProjectService; } });
+const investigation_service_1 = require("./investigation.service");
+Object.defineProperty(exports, "InvestigationService", { enumerable: true, get: function () { return investigation_service_1.InvestigationService; } });
+const user_service_1 = require("./user.service");
+Object.defineProperty(exports, "UserService", { enumerable: true, get: function () { return user_service_1.UserService; } });
+const role_service_1 = require("./role.service");
+Object.defineProperty(exports, "RoleService", { enumerable: true, get: function () { return role_service_1.RoleService; } });
+const permission_service_1 = require("./permission.service");
+Object.defineProperty(exports, "PermissionService", { enumerable: true, get: function () { return permission_service_1.PermissionService; } });
+exports.projectService = new project_service_1.ProjectService();
+exports.investigationService = new investigation_service_1.InvestigationService();
+exports.userService = new user_service_1.UserService();
+exports.roleService = new role_service_1.RoleService();
+exports.permissionService = new permission_service_1.PermissionService();

@@ -1,0 +1,15 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.threatRepository = exports.iocRepository = exports.cveRepository = exports.mitreRepository = exports.ThreatRepository = exports.IocRepository = exports.CveRepository = exports.MitreRepository = void 0;
+const mitre_repository_1 = require("./mitre.repository");
+Object.defineProperty(exports, "MitreRepository", { enumerable: true, get: function () { return mitre_repository_1.MitreRepository; } });
+const cve_repository_1 = require("./cve.repository");
+Object.defineProperty(exports, "CveRepository", { enumerable: true, get: function () { return cve_repository_1.CveRepository; } });
+const ioc_repository_1 = require("./ioc.repository");
+Object.defineProperty(exports, "IocRepository", { enumerable: true, get: function () { return ioc_repository_1.IocRepository; } });
+const threat_repository_1 = require("./threat.repository");
+Object.defineProperty(exports, "ThreatRepository", { enumerable: true, get: function () { return threat_repository_1.ThreatRepository; } });
+exports.mitreRepository = new mitre_repository_1.MitreRepository();
+exports.cveRepository = new cve_repository_1.CveRepository();
+exports.iocRepository = new ioc_repository_1.IocRepository();
+exports.threatRepository = new threat_repository_1.ThreatRepository();

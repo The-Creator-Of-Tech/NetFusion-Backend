@@ -38,16 +38,29 @@ export class FavoriteService extends BaseService {
     const runInTx = async (transaction: any) => {
       const client = transaction || prisma;
 
-      // Idempotent: return if already favorited (and not soft-deleted)
+      // Idempotent: return if already favorited (and not soft-deleted), or restore if soft-deleted
       const existing = await client.favorite.findFirst({
         where: {
           userId: String(data.userId),
           targetId: String(data.targetId),
           type: data.type,
-          deletedAt: null,
         },
       });
-      if (existing) return existing;
+      if (existing) {
+        if (existing.deletedAt !== null) {
+          const restored = await client.favorite.update({
+            where: { id: existing.id },
+            data: {
+              deletedAt: null,
+              updatedBy: data.updatedBy,
+              version: { increment: 1 },
+            },
+          });
+          await eventPublisher.publish('FavoriteAdded', { favorite: restored });
+          return restored;
+        }
+        return existing;
+      }
 
       const favorite = await client.favorite.create({ data });
       await eventPublisher.publish('FavoriteAdded', { favorite });

@@ -1,0 +1,15 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.caseFlowRepository = exports.automationRepository = exports.ruleRepository = exports.playbookRepository = exports.CaseFlowRepository = exports.AutomationRepository = exports.RuleRepository = exports.PlaybookRepository = void 0;
+const playbook_repository_1 = require("./playbook.repository");
+Object.defineProperty(exports, "PlaybookRepository", { enumerable: true, get: function () { return playbook_repository_1.PlaybookRepository; } });
+const rule_repository_1 = require("./rule.repository");
+Object.defineProperty(exports, "RuleRepository", { enumerable: true, get: function () { return rule_repository_1.RuleRepository; } });
+const automation_repository_1 = require("./automation.repository");
+Object.defineProperty(exports, "AutomationRepository", { enumerable: true, get: function () { return automation_repository_1.AutomationRepository; } });
+const case_flow_repository_1 = require("./case-flow.repository");
+Object.defineProperty(exports, "CaseFlowRepository", { enumerable: true, get: function () { return case_flow_repository_1.CaseFlowRepository; } });
+exports.playbookRepository = new playbook_repository_1.PlaybookRepository();
+exports.ruleRepository = new rule_repository_1.RuleRepository();
+exports.automationRepository = new automation_repository_1.AutomationRepository();
+exports.caseFlowRepository = new case_flow_repository_1.CaseFlowRepository();
