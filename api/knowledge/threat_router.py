@@ -62,9 +62,147 @@ def _reset_store() -> None:
     _CAMPAIGN_STORE.clear()
 
 
+def _normalize_threat(r: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize a raw record so it always has the keys _to_response_model() expects.
+
+    Handles two shapes:
+    1. Legacy / in-memory record  — already has `threatId`, `threatKey`, `name`, etc.
+    2. Normalized Prisma record   — has top-level `id`, `name`, and may lack
+                                    `threatId`, `threatKey`, `aliases`, `malware`,
+                                    `country`, `relatedTechniques`, etc.
+    """
+    # Already a fully normalized legacy record
+    if r.get("threatId") and r.get("threatKey"):
+        return r
+
+    import hashlib as _hashlib
+    import uuid as _uuid
+
+    _THREAT_NS = _uuid.UUID("6ba7b812-9dad-11d1-80b4-00c04fd430c8")
+
+    # --- Derive threatId / threatKey from the record --------------------------
+    name_raw: str = r.get("name") or r.get("actorName") or r.get("id") or "threat_unknown"
+    threat_key = _hashlib.sha256(name_raw.strip().lower().encode("utf-8")).hexdigest()[:32]
+    threat_id: str = (
+        r.get("threatId")
+        or r.get("actorId")
+        or str(_uuid.uuid5(_THREAT_NS, threat_key))
+    )
+
+    def _fmt_date(val: Any) -> str:
+        if val is None:
+            return ""
+        if isinstance(val, str):
+            return val
+        if hasattr(val, "isoformat"):
+            try:
+                return val.isoformat()
+            except Exception:
+                return str(val)
+        return str(val)
+
+    # aliases: may be a list of dicts with a `name` field, or plain strings
+    raw_aliases = r.get("aliases") or []
+    aliases: List[str] = []
+    for a in raw_aliases:
+        if isinstance(a, dict):
+            aliases.append(a.get("name") or a.get("alias") or "")
+        elif isinstance(a, str):
+            aliases.append(a)
+    aliases = [x for x in aliases if x]
+
+    # malware: same pattern
+    raw_malware = r.get("malware") or []
+    malware: List[str] = []
+    for m in raw_malware:
+        if isinstance(m, dict):
+            malware.append(m.get("name") or m.get("malwareName") or "")
+        elif isinstance(m, str):
+            malware.append(m)
+    malware = [x for x in malware if x]
+
+    return {
+        "threatId":          threat_id,
+        "threatKey":         r.get("threatKey") or r.get("actorKey") or threat_key,
+        "name":              name_raw,
+        "aliases":           aliases,
+        "description":       r.get("description") or "",
+        "country":           r.get("country") or r.get("originCountry") or "",
+        "motivation":        r.get("motivation") or "",
+        "confidence":        (r.get("confidence") or "MEDIUM").upper(),
+        "severity":          (r.get("severity") or r.get("threatLevel") or "MEDIUM").upper(),
+        "active":            bool(r.get("active", True)),
+        "malware":           malware,
+        "industry":          list(r.get("industry") or []),
+        "relatedTechniques": list(r.get("relatedTechniques") or []),
+        "relatedCVEs":       list(r.get("relatedCVEs") or []),
+        "relatedIOCs":       list(r.get("relatedIOCs") or []),
+        "createdAt":         _fmt_date(r.get("createdAt")),
+        "updatedAt":         _fmt_date(r.get("updatedAt")) or None,
+    }
+
+
+def _normalize_campaign(r: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize a raw campaign record so it always has the keys the router expects.
+
+    Handles two shapes:
+    1. Legacy / in-memory record  — already has `campaignId`, `campaignKey`, `name`, etc.
+    2. Normalized Prisma record   — has top-level `id`, `name`, and may lack
+                                    `campaignId`, `campaignKey`, `startDate`, `endDate`,
+                                    `threatActors`, `relatedTechniques`, etc.
+    """
+    # Already a fully normalized legacy record
+    if r.get("campaignId") and r.get("campaignKey"):
+        return r
+
+    import hashlib as _hashlib
+    import uuid as _uuid
+
+    _CAMP_NS = _uuid.UUID("6ba7b812-9dad-11d1-80b4-00c04fd430c8")
+
+    name_raw: str = r.get("name") or r.get("campaignName") or r.get("id") or "campaign_unknown"
+    camp_key = _hashlib.sha256(name_raw.strip().lower().encode("utf-8")).hexdigest()[:32]
+    camp_id: str = (
+        r.get("campaignId")
+        or str(_uuid.uuid5(_CAMP_NS, camp_key))
+    )
+
+    def _fmt_date(val: Any) -> str:
+        if val is None:
+            return ""
+        if isinstance(val, str):
+            return val
+        if hasattr(val, "isoformat"):
+            try:
+                return val.isoformat()
+            except Exception:
+                return str(val)
+        return str(val)
+
+    return {
+        "campaignId":        camp_id,
+        "campaignKey":       r.get("campaignKey") or camp_key,
+        "name":              name_raw,
+        "description":       r.get("description") or "",
+        "startDate":         _fmt_date(r.get("startDate")) or "",
+        "endDate":           _fmt_date(r.get("endDate")) or "",
+        "threatActors":      list(r.get("threatActors") or []),
+        "relatedTechniques": list(r.get("relatedTechniques") or []),
+        "relatedCVEs":       list(r.get("relatedCVEs") or []),
+        "relatedIOCs":       list(r.get("relatedIOCs") or []),
+        "confidence":        (r.get("confidence") or "MEDIUM").upper(),
+        "createdAt":         _fmt_date(r.get("createdAt")),
+        "active":            bool(r.get("active", True)),
+    }
+
+
 def _all_threats() -> List[Dict[str, Any]]:
-    """Return all threat actors ordered by name ASC."""
-    return sorted(_THREAT_STORE.values(), key=lambda c: c.get("name", ""))
+    """Return all threat actors normalized and ordered by name ASC."""
+    raw = _THREAT_STORE.values()
+    normalized = [_normalize_threat(r) for r in raw]
+    return sorted(normalized, key=lambda c: c.get("name", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -194,18 +332,18 @@ def filter_threats(
 
     if campaign is not None:
         c_val = campaign.strip().lower()
-        # Find campaign IDs that match c_val
+        # Find campaign IDs that match c_val (normalize each campaign record first)
         matching_campaigns = {
-            camp["campaignId"]
+            _normalize_campaign(camp)["campaignId"]
             for camp in _CAMPAIGN_STORE.values()
-            if c_val in camp["name"].lower()
+            if c_val in (_normalize_campaign(camp).get("name", "")).lower()
         }
         filtered = [
             c for c in filtered
             if any(
-                c["threatId"] in camp.get("threatActors", [])
+                c["threatId"] in _normalize_campaign(camp).get("threatActors", [])
                 for camp in _CAMPAIGN_STORE.values()
-                if camp["campaignId"] in matching_campaigns
+                if _normalize_campaign(camp)["campaignId"] in matching_campaigns
             )
         ]
 
@@ -315,7 +453,8 @@ def calculate_threat_statistics(threats: List[Dict[str, Any]]) -> Dict[str, Any]
             country_counts[country] = country_counts.get(country, 0) + 1
 
     campaign_counts: Dict[str, int] = {}
-    for camp in _CAMPAIGN_STORE.values():
+    for camp_raw in _CAMPAIGN_STORE.values():
+        camp = _normalize_campaign(camp_raw)
         camp_name = camp["name"]
         campaign_counts[camp_name] = len(camp.get("threatActors", []))
 
@@ -331,25 +470,30 @@ def calculate_threat_statistics(threats: List[Dict[str, Any]]) -> Dict[str, Any]
 
 
 def _to_response_model(c: Dict[str, Any]) -> ThreatResponse:
-    """Helper to convert stored dictionary to ThreatResponse model."""
+    """Helper to convert stored dictionary to ThreatResponse model.
+
+    Always normalizes first so both legacy metadata-backed records and
+    raw Prisma records are handled safely.
+    """
+    n = _normalize_threat(c)
     return ThreatResponse(
-        threatId=c["threatId"],
-        threatKey=c["threatKey"],
-        threatName=c["name"],
-        aliases=list(c["aliases"]),
-        description=c["description"],
-        country=c["country"],
-        motivation=c["motivation"],
-        confidence=c["confidence"],
-        severity=c["severity"],
-        active=c["active"],
-        malware=list(c["malware"]),
-        industry=list(c["industry"]),
-        relatedTechniques=list(c["relatedTechniques"]),
-        relatedCVEs=list(c["relatedCVEs"]),
-        relatedIOCs=list(c["relatedIOCs"]),
-        createdAt=c["createdAt"],
-        updatedAt=c.get("updatedAt"),
+        threatId=n["threatId"],
+        threatKey=n["threatKey"],
+        threatName=n["name"],
+        aliases=list(n["aliases"]),
+        description=n["description"],
+        country=n["country"],
+        motivation=n["motivation"],
+        confidence=n["confidence"],
+        severity=n["severity"],
+        active=n["active"],
+        malware=list(n["malware"]),
+        industry=list(n["industry"]),
+        relatedTechniques=list(n["relatedTechniques"]),
+        relatedCVEs=list(n["relatedCVEs"]),
+        relatedIOCs=list(n["relatedIOCs"]),
+        createdAt=n["createdAt"],
+        updatedAt=n.get("updatedAt"),
     )
 
 
@@ -692,11 +836,12 @@ def get_relationships(threatId: str) -> APIResponse:
         if not c:
             raise APIErrorNotFound(f"Threat '{threatId}' not found.")
 
+        n = _normalize_threat(c)
         relationships: List[ThreatRelationshipResponse] = []
-        for cve_id in c.get("relatedCVEs", []):
+        for cve_id in n.get("relatedCVEs", []):
             relationships.append(
                 ThreatRelationshipResponse(
-                    sourceThreatId=c["threatId"],
+                    sourceThreatId=n["threatId"],
                     targetId=cve_id,
                     targetType="cve",
                     relationType="targets",
@@ -704,10 +849,10 @@ def get_relationships(threatId: str) -> APIResponse:
                 )
             )
 
-        for tech_id in c.get("relatedTechniques", []):
+        for tech_id in n.get("relatedTechniques", []):
             relationships.append(
                 ThreatRelationshipResponse(
-                    sourceThreatId=c["threatId"],
+                    sourceThreatId=n["threatId"],
                     targetId=tech_id,
                     targetType="technique",
                     relationType="uses",
@@ -715,10 +860,10 @@ def get_relationships(threatId: str) -> APIResponse:
                 )
             )
 
-        for ioc_val in c.get("relatedIOCs", []):
+        for ioc_val in n.get("relatedIOCs", []):
             relationships.append(
                 ThreatRelationshipResponse(
-                    sourceThreatId=c["threatId"],
+                    sourceThreatId=n["threatId"],
                     targetId=ioc_val,
                     targetType="ioc",
                     relationType="associated_with",
@@ -726,11 +871,12 @@ def get_relationships(threatId: str) -> APIResponse:
                 )
             )
 
-        for camp in _CAMPAIGN_STORE.values():
-            if c["threatId"] in camp.get("threatActors", []):
+        for camp_raw in _CAMPAIGN_STORE.values():
+            camp = _normalize_campaign(camp_raw)
+            if n["threatId"] in camp.get("threatActors", []):
                 relationships.append(
                     ThreatRelationshipResponse(
-                        sourceThreatId=c["threatId"],
+                        sourceThreatId=n["threatId"],
                         targetId=camp["campaignId"],
                         targetType="campaign",
                         relationType="associated_with",
@@ -760,9 +906,11 @@ def get_campaigns(threatId: str) -> APIResponse:
         if not c:
             raise APIErrorNotFound(f"Threat '{threatId}' not found.")
 
+        n = _normalize_threat(c)
         matching_camps: List[ThreatCampaignResponse] = []
-        for camp in _CAMPAIGN_STORE.values():
-            if c["threatId"] in camp.get("threatActors", []):
+        for camp_raw in _CAMPAIGN_STORE.values():
+            camp = _normalize_campaign(camp_raw)
+            if n["threatId"] in camp.get("threatActors", []):
                 matching_camps.append(
                     ThreatCampaignResponse(
                         campaignId=camp["campaignId"],
@@ -777,7 +925,7 @@ def get_campaigns(threatId: str) -> APIResponse:
                         relatedIOCs=list(camp["relatedIOCs"]),
                         confidence=camp["confidence"],
                         createdAt=camp["createdAt"],
-                        active=True,
+                        active=camp.get("active", True),
                     )
                 )
 

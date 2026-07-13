@@ -90,6 +90,9 @@ knowledge_router.include_router(ioc_router)
 from api.knowledge.threat_router import threat_router
 knowledge_router.include_router(threat_router)
 
+from api.knowledge.campaign_router import campaign_router
+knowledge_router.include_router(campaign_router)
+
 workflow_router: APIRouter = APIRouter(
     prefix = "/workflow",
     tags   = ["Workflow"],

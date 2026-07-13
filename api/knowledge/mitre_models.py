@@ -191,6 +191,7 @@ class MitreTacticResponse(BaseModel):
     name        : str
     description : str
     order       : int = 0
+    shortName   : Optional[str] = None
 
     class Config:
         frozen = True

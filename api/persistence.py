@@ -59,13 +59,16 @@ def serialize_value(obj: Any) -> Any:
     return obj
 
 def call_repository(repo_name: str, method_name: str, *args) -> Any:
+    print("CALL_REPOSITORY EXECUTED")
     url = f"{PRISMA_API_BASE_URL}/api/repository/{repo_name}/{method_name}"
     serialized_args = serialize_value(list(args))
     resp = requests.post(url, json={"args": serialized_args}, timeout=30)
     if resp.status_code >= 400:
         raise Exception(f"Repository call failed [repo: {repo_name}, method: {method_name}]: {resp.text}")
+        
     return resp.json()
-
+    
+ 
 def ensure_uuid(val: Any) -> Any:
     if val is None or val == "":
         return None
@@ -139,7 +142,12 @@ class RepositoryBackedDict(dict):
         try:
             record = call_repository(self.repo_name, "findById", db_id)
             if record:
-                return record.get("metadata")
+                # Some repositories return the payload under a `metadata` field,
+                # while others (seeded/demo data) return the record fields at
+                # the top level. Prefer `metadata` when present, otherwise
+                # fall back to the full record.
+                meta = record.get("metadata")
+                return meta if isinstance(meta, dict) else record
         except Exception:
             pass
         raise KeyError(key)
@@ -239,20 +247,31 @@ class RepositoryBackedDict(dict):
     def values(self) -> List[Any]:
         try:
             records = call_repository(self.repo_name, "findMany", {"filter": {"deletedAt": None}})
-            return [r.get("metadata") for r in records if r.get("metadata")]
+            results: List[Any] = []
+            for r in records:
+                meta = r.get("metadata")
+                if isinstance(meta, dict):
+                    results.append(meta)
+                else:
+                    # Fall back to top-level record when `metadata` is absent.
+                    results.append(r)
+            return results
         except Exception:
             return []
 
     def keys(self) -> List[str]:
         try:
             records = call_repository(self.repo_name, "findMany", {"filter": {"deletedAt": None}})
-            keys_list = []
+            keys_list: List[str] = []
             for r in records:
                 meta = r.get("metadata")
                 if isinstance(meta, dict) and self.id_field in meta:
                     keys_list.append(meta[self.id_field])
                 else:
-                    keys_list.append(r["id"])
+                    # If the repository returned top-level fields, prefer the
+                    # configured id_field (e.g., `cveId`) and fall back to the
+                    # record UUID `id` when necessary.
+                    keys_list.append(r.get(self.id_field) or r.get("id"))
             return keys_list
         except Exception:
             return []

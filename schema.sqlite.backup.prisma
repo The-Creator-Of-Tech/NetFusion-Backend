@@ -1,0 +1,394 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "./src/generated/sqlite-client"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model ScanRun {
+  id               String          @id @default(uuid())
+  projectId        String
+  captureId        String?
+  startedAt        DateTime        @default(now())
+  completedAt      DateTime?
+  status           String          @default("pending")
+  packetCount      Int             @default(0)
+  summary          String?
+  findings         String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  captureSessionId String?
+  captureSession   CaptureSession? @relation(fields: [captureSessionId], references: [id])
+}
+
+model CaptureSession {
+  id                String    @id @default(uuid())
+  projectId         String
+  captureId         String?
+  packetCount       Int       @default(0)
+  analysis          String?
+  timeline          String?
+  alerts            String?
+  iocs              String?
+  correlations      String?
+  mitre             String?
+  riskRanking       String?
+  attackStory       String?
+  investigationPlan String?
+  executiveReport   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  scanRuns          ScanRun[]
+}
+
+model ReportArchive {
+  id         String   @id @default(uuid())
+  projectId  String
+  reportType String
+  reportData String
+  createdAt  DateTime @default(now())
+  archivedAt DateTime @default(now())
+}
+
+model PcapInvestigation {
+  id                  String   @id @default(uuid())
+  projectId           String
+  filename            String
+  summary             String?
+  alerts              String?
+  iocs                String?
+  timeline            String?
+  mitre               String?
+  riskRanking         String?
+  attackStory         String?
+  investigationPlan   String?
+  executiveReport     String?
+  createdAt           DateTime @default(now())
+  correlations        String?
+  findings            String?
+  trafficIntelligence String?
+}
+
+model NmapScan {
+  id         String   @id @default(uuid())
+  projectId  String
+  target     String
+  profile    String   @default("quick")
+  resultJson String?
+  rawOutput  String?
+  createdAt  DateTime @default(now())
+}
+
+/// Root identity record for a discovered network asset.
+/// All searchable attributes are stored in normalized child tables.
+/// Only `notes` and `metadata` remain as free-form string/JSON fields.
+model Asset {
+  id            String               @id @default(uuid())
+  projectId     String
+  deviceType    String?
+  vendor        String?
+  os            String?
+  osVersion     String?
+  firstSeen     DateTime             @default(now())
+  lastSeen      DateTime             @default(now())
+  confidence    Float                @default(0.0)
+  riskScore     Float                @default(0.0)
+  isManaged     Boolean              @default(false)
+  notes         String?
+  metadata      String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  evidence      AssetFieldEvidence[]
+  hostnames     AssetHostname[]
+  ipAddresses   AssetIPAddress[]
+  macAddresses  AssetMAC[]
+  ports         AssetPort[]
+  relationsTo   AssetRelationship[]  @relation("RelationshipTarget")
+  relationsFrom AssetRelationship[]  @relation("RelationshipSource")
+  ssids         AssetSSID[]
+  services      AssetService[]
+  tags          AssetTag[]
+
+  @@index([projectId])
+  @@index([riskScore])
+  @@index([lastSeen])
+  @@index([projectId, lastSeen])
+  @@index([projectId, riskScore])
+}
+
+/// Every hostname ever observed for an asset (DNS, mDNS, NetBIOS, LLMNR, …).
+model AssetHostname {
+  id         String   @id @default(uuid())
+  assetId    String
+  hostname   String
+  isPrimary  Boolean  @default(false)
+  confidence Float    @default(1.0)
+  firstSeen  DateTime @default(now())
+  lastSeen   DateTime @default(now())
+  source     String?
+  asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, hostname])
+  @@index([assetId])
+  @@index([hostname])
+}
+
+/// Full IP address history for an asset, including rotated/historical addresses.
+model AssetIPAddress {
+  id        String   @id @default(uuid())
+  assetId   String
+  ipAddress String
+  isCurrent Boolean  @default(true)
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+  source    String?
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, ipAddress])
+  @@index([assetId])
+  @@index([ipAddress])
+  @@index([isCurrent])
+}
+
+/// MAC address records — supports multi-interface and MAC rotation tracking.
+model AssetMAC {
+  id         String   @id @default(uuid())
+  assetId    String
+  macAddress String
+  isCurrent  Boolean  @default(true)
+  isPrimary  Boolean  @default(false)
+  vendor     String?
+  firstSeen  DateTime @default(now())
+  lastSeen   DateTime @default(now())
+  source     String?
+  asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, macAddress])
+  @@index([assetId])
+  @@index([macAddress])
+  @@index([isCurrent])
+}
+
+/// WiFi SSIDs associated with an asset (probed, beacon, or association frames).
+model AssetSSID {
+  id        String   @id @default(uuid())
+  assetId   String
+  ssid      String
+  isCurrent Boolean  @default(true)
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+  source    String?
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, ssid])
+  @@index([assetId])
+  @@index([ssid])
+}
+
+/// Open/filtered/closed ports observed on an asset via capture or active scan.
+model AssetPort {
+  id        String   @id @default(uuid())
+  assetId   String
+  port      Int
+  protocol  String   @default("tcp")
+  service   String?
+  state     String   @default("open")
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, port, protocol])
+  @@index([assetId])
+  @@index([port])
+  @@index([protocol])
+  @@index([state])
+}
+
+/// Identified application-layer services running on an asset.
+model AssetService {
+  id         String  @id @default(uuid())
+  assetId    String
+  name       String
+  version    String?
+  protocol   String?
+  port       Int?
+  confidence Float   @default(1.0)
+  asset      Asset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+  @@index([name])
+  @@index([port])
+}
+
+/// Analyst-applied or auto-generated classification labels for an asset.
+model AssetTag {
+  id        String   @id @default(uuid())
+  assetId   String
+  tag       String
+  createdAt DateTime @default(now())
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, tag])
+  @@index([assetId])
+  @@index([tag])
+}
+
+/// Generic evidence trail linking any observed field value back to its source
+/// (pcap packet, Nmap scan result, DNS response, manual entry, etc.).
+/// Acts as an audit log and supports confidence scoring per observation.
+model AssetFieldEvidence {
+  id           String   @id @default(uuid())
+  assetId      String
+  fieldName    String
+  fieldValue   String
+  confidence   Float    @default(1.0)
+  sourceType   String?
+  sourceId     String?
+  packetNumber Int?
+  captureId    String?
+  observedAt   DateTime @default(now())
+  metadata     String?
+  asset        Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+  @@index([assetId, fieldName])
+  @@index([fieldName])
+  @@index([captureId])
+  @@index([sourceType, sourceId])
+  @@index([observedAt])
+}
+
+/// Directed graph of relationships between assets.
+/// Examples: "communicates_with", "resolves_to", "routes_through", "hosts"
+model AssetRelationship {
+  id               String   @id @default(uuid())
+  sourceId         String
+  targetId         String
+  relationshipType String
+  confidence       Float    @default(1.0)
+  firstSeen        DateTime @default(now())
+  lastSeen         DateTime @default(now())
+  metadata         String?
+  target           Asset    @relation("RelationshipTarget", fields: [targetId], references: [id], onDelete: Cascade)
+  source           Asset    @relation("RelationshipSource", fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, targetId, relationshipType])
+  @@index([sourceId])
+  @@index([targetId])
+  @@index([relationshipType])
+}
+
+/// Full relationship record produced by the Relationship Engine.
+/// Scoped to a project.  Natural key:
+/// (projectId, sourceAssetId, targetAssetId, relationshipType, protocol, port)
+/// UPSERT on that key — never duplicate a relationship, just update it.
+model Relationship {
+  id               String                 @id @default(uuid())
+  projectId        String
+  sourceAssetId    String
+  targetAssetId    String
+  relationshipType String
+  protocol         String
+  port             Int?
+  direction        String                 @default("UNKNOWN")
+  state            String                 @default("NEW")
+  relationshipKey  String?                @unique
+  packetCount      Int                    @default(0)
+  byteCount        Int                    @default(0)
+  firstSeen        DateTime               @default(now())
+  lastSeen         DateTime               @default(now())
+  confidence       Float                  @default(0.0)
+  lastEvidenceId   String?
+  engineVersion    String?
+  metadata         String?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  evidenceLinks    RelationshipEvidence[]
+
+  @@unique([projectId, sourceAssetId, targetAssetId, relationshipType, protocol, port])
+  @@index([projectId])
+  @@index([sourceAssetId])
+  @@index([targetAssetId])
+  @@index([projectId, sourceAssetId])
+  @@index([projectId, targetAssetId])
+  @@index([relationshipType])
+  @@index([state])
+  @@index([lastSeen])
+  @@index([projectId, lastSeen])
+}
+
+/// Append-only evidence trail for one Relationship.
+/// Each row links one EvidenceRecord (by its stable evidenceId) to the
+/// Relationship it supports.  Deduplication key: (relationshipId, evidenceId).
+model RelationshipEvidence {
+  id             String       @id @default(uuid())
+  relationshipId String
+  evidenceId     String
+  captureId      String?
+  packetNumber   Int?
+  sourceType     String?
+  observedAt     DateTime     @default(now())
+  metadata       String?
+  createdAt      DateTime     @default(now())
+  relationship   Relationship @relation(fields: [relationshipId], references: [id], onDelete: Cascade)
+
+  @@unique([relationshipId, evidenceId])
+  @@index([relationshipId])
+  @@index([evidenceId])
+  @@index([captureId])
+  @@index([observedAt])
+}
+
+/// Immutable append-only audit log for every state change a Relationship
+/// passes through.  One row per atomic mutation.
+///
+/// Key AI-facing fields
+/// --------------------
+/// changedFields  — JSON array of field names that changed in this event.
+/// e.g. '["confidence","packetCount","byteCount"]'
+/// AI Copilot reads this to generate targeted explanations
+/// without needing to diff rows itself.
+///
+/// changeReason   — stable human-readable reason string from
+/// RELATIONSHIP_CHANGE_REASON_* constants.
+/// e.g. "New packet observed" | "New evidence linked"
+/// AI Copilot uses this as the primary explanation label.
+/// GROUP BY changeReason enables trend analytics.
+model RelationshipHistory {
+  id               String   @id @default(uuid())
+  relationshipId   String
+  relationshipKey  String
+  projectId        String
+  sourceAssetId    String
+  targetAssetId    String
+  relationshipType String
+  protocol         String
+  port             Int?
+  eventType        String
+  changedFields    String
+  changeReason     String
+  previousSnapshot String?
+  currentSnapshot  String
+  sequenceNumber   Int      @default(0)
+  parentEventId    String?
+  occurredAt       DateTime @default(now())
+  summary          String?
+  engineVersion    String?
+  metadata         String?
+  createdAt        DateTime @default(now())
+
+  @@unique([relationshipId, eventType, occurredAt])
+  @@index([relationshipId])
+  @@index([relationshipKey])
+  @@index([projectId])
+  @@index([sourceAssetId])
+  @@index([targetAssetId])
+  @@index([eventType])
+  @@index([changeReason])
+  @@index([occurredAt])
+  @@index([projectId, occurredAt])
+  @@index([relationshipId, occurredAt])
+}

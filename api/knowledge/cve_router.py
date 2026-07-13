@@ -354,23 +354,41 @@ def _to_response_model(c: Dict[str, Any]) -> CVEResponse:
             impactScore=cd.get("impactScore", 0.0),
         )
 
+    # Support records that may be returned either under a `metadata` dict
+    # or as top-level fields. Provide safe fallbacks so the API layer does
+    # not raise KeyError when the seed/data uses different shapes.
+    record_id = c.get("recordId") or c.get("id") or ""
+    record_key = c.get("recordKey") or c.get("cveId") or ""
+
+    def _fmt_date(val: Any) -> str:
+        if val is None:
+            return ""
+        if isinstance(val, str):
+            return val
+        if hasattr(val, "isoformat"):
+            try:
+                return val.isoformat()
+            except Exception:
+                return str(val)
+        return str(val)
+
     return CVEResponse(
-        recordId=c["recordId"],
-        recordKey=c["recordKey"],
-        cveId=c["cveId"],
-        description=c["description"],
-        severity=c["severity"],
-        cvssScore=c["cvssScore"],
-        publishedDate=c["publishedDate"],
-        modifiedDate=c["modifiedDate"],
-        references=list(c["references"]),
-        affectedPlatforms=list(c["affectedPlatforms"]),
+        recordId=record_id,
+        recordKey=record_key,
+        cveId=c.get("cveId", ""),
+        description=c.get("description", ""),
+        severity=c.get("severity", ""),
+        cvssScore=c.get("cvssScore", 0.0),
+        publishedDate=_fmt_date(c.get("publishedDate")),
+        modifiedDate=_fmt_date(c.get("modifiedDate")),
+        references=list(c.get("references") or []),
+        affectedPlatforms=list(c.get("affectedPlatforms") or []),
         mappedTechniques=mapped_techs,
-        createdAt=c["createdAt"],
-        exploited=c["exploited"],
-        patched=c["patched"],
-        vendor=c["vendor"],
-        product=c["product"],
+        createdAt=_fmt_date(c.get("createdAt")),
+        exploited=bool(c.get("exploited", False)),
+        patched=bool(c.get("patched", False)),
+        vendor=c.get("vendor", ""),
+        product=c.get("product", ""),
         affectedProducts=products_resp,
         cvssDetails=cvss_details,
     )

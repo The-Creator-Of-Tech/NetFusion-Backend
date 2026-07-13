@@ -60,9 +60,80 @@ def _reset_store() -> None:
     _IOC_STORE.clear()
 
 
+def _normalize_ioc(r: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize a raw record so it always has the keys _to_response_model() expects.
+
+    Handles two shapes:
+    1. Legacy / in-memory record  — already has `iocId`, `iocKey`, `iocFingerprint`, etc.
+    2. Normalized Prisma record   — has top-level `id`, `value`, `iocType`, and may lack
+                                    `iocKey`, `iocFingerprint`, `threatActor`, `campaign`, etc.
+    """
+    # Already a fully normalized legacy record
+    if r.get("iocId") and r.get("iocKey") and r.get("iocFingerprint"):
+        return r
+
+    import hashlib as _hashlib
+    import uuid as _uuid
+
+    _IOC_NS = _uuid.UUID("6ba7b812-9dad-11d1-80b4-00c04fd430c8")
+
+    # --- Derive iocId / iocKey / iocFingerprint from the record ---------------
+    ioc_value: str = r.get("value") or r.get("iocValue") or r.get("id") or "ioc_unknown"
+    ioc_type: str = (r.get("iocType") or r.get("type") or "IP").upper()
+
+    # iocKey: SHA-256 of "<TYPE>:<value>"
+    raw_key_src = f"{ioc_type}:{ioc_value}".lower()
+    ioc_key = _hashlib.sha256(raw_key_src.encode("utf-8")).hexdigest()[:32]
+
+    # iocFingerprint: SHA-256 of the full value
+    ioc_fingerprint = _hashlib.sha256(ioc_value.encode("utf-8")).hexdigest()
+
+    # iocId: UUID5 over the key
+    ioc_id: str = (
+        r.get("iocId")
+        or str(_uuid.uuid5(_IOC_NS, ioc_key))
+    )
+
+    def _fmt_date(val: Any) -> str:
+        if val is None:
+            return ""
+        if isinstance(val, str):
+            return val
+        if hasattr(val, "isoformat"):
+            try:
+                return val.isoformat()
+            except Exception:
+                return str(val)
+        return str(val)
+
+    return {
+        "iocId":             ioc_id,
+        "iocKey":            r.get("iocKey") or ioc_key,
+        "iocFingerprint":    r.get("iocFingerprint") or ioc_fingerprint,
+        "iocType":           ioc_type,
+        "value":             ioc_value,
+        "severity":          (r.get("severity") or "MEDIUM").upper(),
+        "confidence":        (r.get("confidence") or "MEDIUM").upper(),
+        "description":       r.get("description") or "",
+        "source":            r.get("source") or r.get("dataSource") or "",
+        "tags":              list(r.get("tags") or []),
+        "relatedCVEs":       list(r.get("relatedCVEs") or []),
+        "relatedTechniques": list(r.get("relatedTechniques") or []),
+        "createdAt":         _fmt_date(r.get("createdAt")),
+        "updatedAt":         _fmt_date(r.get("updatedAt")) or None,
+        "malicious":         bool(r.get("malicious", True)),
+        "revoked":           bool(r.get("revoked", False)),
+        "threatActor":       r.get("threatActor") or "",
+        "campaign":          r.get("campaign") or "",
+    }
+
+
 def _all_iocs() -> List[Dict[str, Any]]:
-    """Return all IOCs ordered by value ASC."""
-    return sorted(_IOC_STORE.values(), key=lambda c: c.get("value", ""))
+    """Return all IOCs normalized and ordered by value ASC."""
+    raw = _IOC_STORE.values()
+    normalized = [_normalize_ioc(r) for r in raw]
+    return sorted(normalized, key=lambda c: c.get("value", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -291,26 +362,31 @@ def calculate_ioc_statistics(iocs: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _to_response_model(c: Dict[str, Any]) -> IOCResponse:
-    """Helper to convert stored dictionary to IOCResponse model."""
+    """Helper to convert stored dictionary to IOCResponse model.
+
+    Always normalizes first so both legacy metadata-backed records and
+    raw Prisma records are handled safely.
+    """
+    n = _normalize_ioc(c)
     return IOCResponse(
-        iocId=c["iocId"],
-        iocKey=c["iocKey"],
-        iocFingerprint=c["iocFingerprint"],
-        iocType=c["iocType"],
-        value=c["value"],
-        severity=c["severity"],
-        confidence=c["confidence"],
-        description=c["description"],
-        source=c["source"],
-        tags=list(c["tags"]),
-        relatedCVEs=list(c["relatedCVEs"]),
-        relatedTechniques=list(c["relatedTechniques"]),
-        createdAt=c["createdAt"],
-        updatedAt=c.get("updatedAt"),
-        malicious=c["malicious"],
-        revoked=c["revoked"],
-        threatActor=c.get("threatActor", ""),
-        campaign=c.get("campaign", ""),
+        iocId=n["iocId"],
+        iocKey=n["iocKey"],
+        iocFingerprint=n["iocFingerprint"],
+        iocType=n["iocType"],
+        value=n["value"],
+        severity=n["severity"],
+        confidence=n["confidence"],
+        description=n["description"],
+        source=n["source"],
+        tags=list(n["tags"]),
+        relatedCVEs=list(n["relatedCVEs"]),
+        relatedTechniques=list(n["relatedTechniques"]),
+        createdAt=n["createdAt"],
+        updatedAt=n.get("updatedAt"),
+        malicious=n["malicious"],
+        revoked=n["revoked"],
+        threatActor=n.get("threatActor", ""),
+        campaign=n.get("campaign", ""),
     )
 
 
@@ -662,11 +738,12 @@ def get_relationships(iocId: str) -> APIResponse:
         if not c:
             raise APIErrorNotFound(f"IOC '{iocId}' not found.")
 
+        n = _normalize_ioc(c)
         relationships: List[IOCRelationshipResponse] = []
-        for cve_id in c.get("relatedCVEs", []):
+        for cve_id in n.get("relatedCVEs", []):
             relationships.append(
                 IOCRelationshipResponse(
-                    sourceIocId=c["iocId"],
+                    sourceIocId=n["iocId"],
                     targetId=cve_id,
                     targetType="cve",
                     relationType="exploits",
@@ -674,10 +751,10 @@ def get_relationships(iocId: str) -> APIResponse:
                 )
             )
 
-        for tech_id in c.get("relatedTechniques", []):
+        for tech_id in n.get("relatedTechniques", []):
             relationships.append(
                 IOCRelationshipResponse(
-                    sourceIocId=c["iocId"],
+                    sourceIocId=n["iocId"],
                     targetId=tech_id,
                     targetType="technique",
                     relationType="uses",
@@ -685,22 +762,22 @@ def get_relationships(iocId: str) -> APIResponse:
                 )
             )
 
-        if c.get("threatActor"):
+        if n.get("threatActor"):
             relationships.append(
                 IOCRelationshipResponse(
-                    sourceIocId=c["iocId"],
-                    targetId=c["threatActor"],
+                    sourceIocId=n["iocId"],
+                    targetId=n["threatActor"],
                     targetType="threat_actor",
                     relationType="attributed_to",
                     confidence=75.0,
                 )
             )
 
-        if c.get("campaign"):
+        if n.get("campaign"):
             relationships.append(
                 IOCRelationshipResponse(
-                    sourceIocId=c["iocId"],
-                    targetId=c["campaign"],
+                    sourceIocId=n["iocId"],
+                    targetId=n["campaign"],
                     targetType="campaign",
                     relationType="associated_with",
                     confidence=80.0,
@@ -729,18 +806,19 @@ def get_enrichment(iocId: str) -> APIResponse:
         if not c:
             raise APIErrorNotFound(f"IOC '{iocId}' not found.")
 
+        n = _normalize_ioc(c)
         sev_scores = {"LOW": 25, "MEDIUM": 50, "HIGH": 75, "CRITICAL": 95}
-        reputation = sev_scores.get(c.get("severity", "").upper(), 50)
+        reputation = sev_scores.get(n.get("severity", "").upper(), 50)
 
         enrichment = IOCEnrichmentResponse(
-            iocId=c["iocId"],
-            iocType=c["iocType"],
-            value=c["value"],
+            iocId=n["iocId"],
+            iocType=n["iocType"],
+            value=n["value"],
             reputationScore=reputation,
-            malicious=c["malicious"],
-            categories=c["tags"],
-            firstSeen=c["createdAt"],
-            lastSeen=c.get("updatedAt") or c["createdAt"],
+            malicious=n["malicious"],
+            categories=n["tags"],
+            firstSeen=n["createdAt"],
+            lastSeen=n.get("updatedAt") or n["createdAt"],
             provider="NetFusion Intelligence Engine",
         )
 

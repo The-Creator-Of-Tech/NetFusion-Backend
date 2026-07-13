@@ -61,9 +61,95 @@ def _reset_store() -> None:
     _TECHNIQUE_STORE.clear()
 
 
+def _normalize_technique(r: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize a raw record so it always has the keys _to_response_model() expects.
+
+    Handles two shapes:
+    1. Legacy / in-memory record  — already has `techniqueId`, `techniqueKey`, `tactic`, etc.
+    2. Normalized Prisma record   — has top-level `id`, `mitreId`, `tacticId`, `severity` enum,
+                                    and relations (`mitigations`) that may be absent or returned
+                                    as a list of dicts with a `description` field.
+    """
+    # Already a legacy record
+    if r.get("techniqueId"):
+        return r
+
+    # --- Derive techniqueId / techniqueKey from the Prisma record -------------
+    import hashlib as _hashlib
+    import uuid as _uuid
+
+    _MITRE_NS = _uuid.UUID("6ba7b812-9dad-11d1-80b4-00c04fd430c8")
+
+    mitre_id_raw: str = r.get("mitreId") or r.get("id") or "T_UNKNOWN"
+    tech_code = mitre_id_raw.strip().upper()
+    tech_key = _hashlib.sha256(tech_code.encode("utf-8")).hexdigest()[:32]
+    tech_id = str(_uuid.uuid5(_MITRE_NS, tech_key))
+
+    # --- tactic: Prisma stores tacticId (UUID FK).  We can look up the tactic
+    #     name from the embedded relation if available, otherwise fall back to
+    #     the tacticId itself (or empty string).
+    tactic_rel = r.get("tactic")          # may be a dict {"name":..., "shortName":...}
+    tactic_str = ""
+    if isinstance(tactic_rel, dict):
+        # Prefer the enum-style uppercase name used throughout the router
+        tactic_str = (
+            tactic_rel.get("shortName", "")
+            .upper()
+            .replace("-", "_")
+        ) or tactic_rel.get("name", "").upper().replace(" ", "_")
+    elif r.get("tacticId"):
+        # No relation hydrated — leave as empty; the router won't crash on it
+        tactic_str = ""
+
+    # --- mitigations: Prisma returns a list of MitreMitigation objects with a
+    #     `description` field; legacy records store plain strings.
+    raw_mitigations = r.get("mitigations") or []
+    mitigations: List[str] = []
+    for m in raw_mitigations:
+        if isinstance(m, dict):
+            mitigations.append(m.get("description") or m.get("mitreId") or "")
+        elif isinstance(m, str):
+            mitigations.append(m)
+    mitigations = [x for x in mitigations if x]
+
+    def _fmt_date(val: Any) -> str:
+        if val is None:
+            return ""
+        if isinstance(val, str):
+            return val
+        if hasattr(val, "isoformat"):
+            try:
+                return val.isoformat()
+            except Exception:
+                return str(val)
+        return str(val)
+
+    return {
+        "techniqueId":  tech_id,
+        "techniqueKey": tech_key,
+        "mitreId":      mitre_id_raw,
+        "name":         r.get("name") or "",
+        "tactic":       tactic_str,
+        "description":  r.get("description") or "",
+        "platforms":    list(r.get("platforms") or []),
+        "detection":    r.get("detection") or "",
+        "mitigations":  mitigations,
+        "references":   list(r.get("references") or []),
+        "createdAt":    _fmt_date(r.get("createdAt")),
+        "severity":     str(r.get("severity") or "MEDIUM"),
+        "dataSource":   r.get("dataSource") or "",
+        "revoked":      bool(r.get("revoked") or False),
+        "deprecated":   bool(r.get("deprecated") or False),
+        "tacticCount":  r.get("tacticCount") or 1,
+    }
+
+
 def _all_techniques() -> List[Dict[str, Any]]:
     """Return all techniques ordered by techniqueId ASC."""
-    return sorted(_TECHNIQUE_STORE.values(), key=lambda t: t.get("techniqueId", ""))
+    raw = _TECHNIQUE_STORE.values()
+    normalized = [_normalize_technique(r) for r in raw]
+    return sorted(normalized, key=lambda t: t.get("techniqueId", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -390,24 +476,29 @@ def calculate_technique_statistics(techniques: List[Dict[str, Any]]) -> Dict[str
 
 
 def _to_response_model(t: Dict[str, Any]) -> TechniqueResponse:
-    """Helper to convert stored dictionary to TechniqueResponse model."""
+    """Helper to convert stored dictionary to TechniqueResponse model.
+
+    Always normalizes first so both legacy metadata-backed records and
+    raw Prisma records are handled safely.
+    """
+    n = _normalize_technique(t)
     return TechniqueResponse(
-        techniqueId=t["techniqueId"],
-        techniqueKey=t["techniqueKey"],
-        mitreId=t["mitreId"],
-        name=t["name"],
-        tactic=t["tactic"],
-        description=t["description"],
-        platforms=list(t["platforms"]),
-        detection=t["detection"],
-        mitigations=list(t["mitigations"]),
-        references=list(t["references"]),
-        createdAt=t["createdAt"],
-        severity=t["severity"],
-        dataSource=t["dataSource"],
-        revoked=t["revoked"],
-        deprecated=t["deprecated"],
-        tacticCount=t.get("tacticCount", 1),
+        techniqueId=n["techniqueId"],
+        techniqueKey=n["techniqueKey"],
+        mitreId=n["mitreId"],
+        name=n["name"],
+        tactic=n["tactic"],
+        description=n["description"],
+        platforms=list(n["platforms"]),
+        detection=n["detection"],
+        mitigations=list(n["mitigations"]),
+        references=list(n["references"]),
+        createdAt=n["createdAt"],
+        severity=n["severity"],
+        dataSource=n["dataSource"],
+        revoked=n["revoked"],
+        deprecated=n["deprecated"],
+        tacticCount=n.get("tacticCount", 1),
     )
 
 

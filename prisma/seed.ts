@@ -1740,8 +1740,6 @@ async function main(): Promise<void> {
   // ── 8. Upsert Shared models data ───────────────────────────────────────────
   console.log('\n[8/8] Seeding demo Shared data …');
 
-  const adminUserId = '13e470d1-dbd0-4984-85f1-05b6e453fd4a';
-
   // 2 Tags
   const tag1Id = 'c29f2e3a-6f0a-4b9a-bbcb-7c73a1d9c001';
   const tag1 = await prisma.tag.upsert({
@@ -1814,7 +1812,7 @@ async function main(): Promise<void> {
     where: { id: comment1Id },
     create: {
       id: comment1Id,
-      userId: adminUserId,
+      userId: user.id,
       projectId,
       investigationId,
       targetId: '4e9f2e3a-6f0a-4b9a-bbcb-7c73a1d9e301',
@@ -1833,7 +1831,7 @@ async function main(): Promise<void> {
     where: { id: comment2Id },
     create: {
       id: comment2Id,
-      userId: adminUserId,
+      userId: user.id,
       projectId,
       investigationId,
       content: 'General team review required for host status.',
@@ -1894,7 +1892,7 @@ async function main(): Promise<void> {
     where: { id: favorite1Id },
     create: {
       id: favorite1Id,
-      userId: adminUserId,
+      userId: user.id,
       targetId: investigationId,
       type: 'INVESTIGATION',
       createdBy: 'seed',
@@ -1910,7 +1908,7 @@ async function main(): Promise<void> {
     where: { id: notification1Id },
     create: {
       id: notification1Id,
-      userId: adminUserId,
+      userId: user.id,
       title: 'Active Brute Force Alert',
       message: 'New credential brute force finding added to investigation.',
       type: 'ALERT',
@@ -1927,7 +1925,7 @@ async function main(): Promise<void> {
     where: { id: notification2Id },
     create: {
       id: notification2Id,
-      userId: adminUserId,
+      userId: user.id,
       title: 'System Update Successful',
       message: 'Workflow engine has been updated to version 2.4.',
       type: 'SYSTEM',
@@ -1946,7 +1944,7 @@ async function main(): Promise<void> {
     where: { id: preference1Id },
     create: {
       id: preference1Id,
-      userId: adminUserId,
+      userId: user.id,
       key: 'ui.theme',
       value: 'dark',
       type: 'THEME',
@@ -1961,7 +1959,7 @@ async function main(): Promise<void> {
   const activityLogs = [
     {
       id: 'c29f2e3a-6f0a-4b9a-bbcb-7c73a1d9c701',
-      userId: adminUserId,
+      userId: user.id,
       projectId,
       investigationId,
       action: 'Create Tag Assignment',
@@ -1970,7 +1968,7 @@ async function main(): Promise<void> {
     },
     {
       id: 'c29f2e3a-6f0a-4b9a-bbcb-7c73a1d9c702',
-      userId: adminUserId,
+      userId: user.id,
       projectId,
       investigationId,
       action: 'Upload Log Attachment',
@@ -1979,7 +1977,7 @@ async function main(): Promise<void> {
     },
     {
       id: 'c29f2e3a-6f0a-4b9a-bbcb-7c73a1d9c703',
-      userId: adminUserId,
+      userId: user.id,
       projectId,
       investigationId,
       action: 'Change Preference',
@@ -2040,7 +2038,7 @@ async function main(): Promise<void> {
     where: { id: apiKey1Id },
     create: {
       id: apiKey1Id,
-      userId: adminUserId,
+      userId: user.id,
       name: 'Triage Script API Key',
       keyHash: 'a5f3333333333333333333333333333333333333333333333333333333333333',
       status: 'ACTIVE',
@@ -2056,7 +2054,7 @@ async function main(): Promise<void> {
     where: { id: apiKey2Id },
     create: {
       id: apiKey2Id,
-      userId: adminUserId,
+      userId: user.id,
       name: 'Expired Test Key',
       keyHash: 'b5f3333333333333333333333333333333333333333333333333333333333333',
       status: 'EXPIRED',
