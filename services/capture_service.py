@@ -113,7 +113,7 @@ def start_capture(interface_id: str) -> dict:
     if _capture_process:
         return {"error": "Capture already running"}
 
-    _capture_file = rf"C:\NetFusion-Agent\Captured_packets\capture_{int(time.time())}.pcapng"
+    _capture_file = rf"C:\Netfusion\NetFusion-Agent\Captured_packets\capture_{int(time.time())}.pcapng"
 
     _capture_process = subprocess.Popen(
         [TSHARK_PATH, "-i", interface_id, "-w", _capture_file]

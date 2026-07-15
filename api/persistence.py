@@ -282,10 +282,13 @@ class RepositoryBackedDict(dict):
             items_list = []
             for r in records:
                 meta = r.get("metadata")
-                key = r["id"]
                 if isinstance(meta, dict) and self.id_field in meta:
                     key = meta[self.id_field]
-                items_list.append((key, meta))
+                else:
+                    # Mirror keys() logic: prefer configured id_field at top level,
+                    # fall back to the record UUID when absent.
+                    key = r.get(self.id_field) or r.get("id")
+                items_list.append((key, meta if isinstance(meta, dict) else r))
             return items_list
         except Exception:
             return []
@@ -435,13 +438,120 @@ class AutomationExecutionsStore(dict):
         except Exception:
             return False
 
+class WorkflowExecutionsStore(dict):
+    """Persistence store for WorkflowExecution records keyed by executionId."""
+
+    def clear(self):
+        try:
+            call_repository("workflowExecution", "deleteMany", {"where": {}})
+        except Exception:
+            pass
+
+    def get_by_id(self, execution_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single execution record by its executionId."""
+        try:
+            db_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, execution_id)) if not is_valid_uuid(execution_id) else execution_id
+            records = call_repository("workflowExecution", "findMany", {
+                "filter": {"id": db_id}
+            })
+            if records:
+                r = records[0]
+                return self._map_record(r)
+            return None
+        except Exception:
+            return None
+
+    def get_by_playbook(self, playbook_id: str) -> List[Dict[str, Any]]:
+        """Fetch all executions for a given playbook."""
+        try:
+            records = call_repository("workflowExecution", "findMany", {
+                "filter": {"playbookId": ensure_uuid(playbook_id)}
+            })
+            return [self._map_record(r) for r in records]
+        except Exception:
+            return []
+
+    def create(self, execution: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new WorkflowExecution record."""
+        execution_id = execution.get("executionId") or str(uuid.uuid4())
+        db_id = ensure_uuid(execution_id)
+        playbook_id = ensure_uuid(execution.get("playbookId", ""))
+        payload = {
+            "id": db_id,
+            "playbookId": playbook_id,
+            "status": execution.get("status", "RUNNING"),
+            "progress": int(execution.get("progress", 0)),
+            "logs": execution.get("logs", []),
+            "startedAt": execution.get("startedAt") or datetime.utcnow().isoformat() + "Z",
+            "finishedAt": execution.get("finishedAt"),
+            "triggeredBy": execution.get("triggeredBy"),
+            "totalSteps": int(execution.get("totalSteps", 0)),
+            "completedSteps": int(execution.get("completedSteps", 0)),
+            "failedSteps": int(execution.get("failedSteps", 0)),
+            "stepResults": execution.get("stepResults"),
+            "createdBy": execution.get("createdBy", "system"),
+            "updatedBy": execution.get("updatedBy", "system"),
+            "metadata": execution.get("metadata"),
+        }
+        try:
+            call_repository("workflowExecution", "create", {"data": payload})
+        except Exception as err:
+            print("Error creating workflow execution:", err)
+            raise
+        return {"executionId": db_id, **execution}
+
+    def update(self, execution_id: str, updates: Dict[str, Any]) -> bool:
+        """Update an existing WorkflowExecution record by its executionId."""
+        db_id = ensure_uuid(execution_id)
+        try:
+            # Build minimal update payload — never mutate playbookId/createdAt
+            update_data: Dict[str, Any] = {"updatedBy": "system"}
+            for field in ("status", "progress", "logs", "finishedAt",
+                          "completedSteps", "failedSteps", "stepResults", "metadata"):
+                if field in updates:
+                    update_data[field] = updates[field]
+            call_repository("workflowExecution", "update", db_id, update_data)
+            return True
+        except Exception as err:
+            print("Error updating workflow execution:", err)
+            return False
+
+    @staticmethod
+    def _map_record(r: Dict[str, Any]) -> Dict[str, Any]:
+        meta = r.get("metadata")
+        if isinstance(meta, dict) and "executionId" in meta:
+            # record was stored with Python metadata wrapper
+            return meta
+        return {
+            "executionId": r.get("id"),
+            "playbookId": r.get("playbookId"),
+            "status": r.get("status", "RUNNING"),
+            "progress": r.get("progress", 0),
+            "logs": r.get("logs") or [],
+            "startedAt": r.get("startedAt"),
+            "finishedAt": r.get("finishedAt"),
+            "triggeredBy": r.get("triggeredBy"),
+            "totalSteps": r.get("totalSteps", 0),
+            "completedSteps": r.get("completedSteps", 0),
+            "failedSteps": r.get("failedSteps", 0),
+            "stepResults": r.get("stepResults"),
+        }
+
 # Mapping functions for standard database columns
 def map_playbook(v):
     return {
         "projectId": ensure_uuid(v.get("projectId") or "1d9f2e3a-6f0a-4b9a-bbcb-7c73a1d9e001"),
+        "investigationId": ensure_uuid(v.get("investigationId")) if v.get("investigationId") else None,
         "name": v.get("name") or "Unnamed Playbook",
+        "description": v.get("description") or "",
         "severity": (v.get("severity") or "MEDIUM").upper(),
-        "status": (v.get("status") or "DRAFT").upper()
+        "status": (v.get("status") or "DRAFT").upper(),
+        "confidence": float(v.get("confidence") if v.get("confidence") is not None else 100.0),
+        "enabled": bool(v.get("enabled", True)),
+        "priority": int(v.get("priority") or 1),
+        "category": v.get("category") or "",
+        "author": v.get("author") or "",
+        "steps": v.get("steps") or []
     }
 
 def map_rule(v):
@@ -453,10 +563,15 @@ def map_rule(v):
     }
 
 def map_automation(v):
+    # status: map legacy "INACTIVE" → "DRAFT" to match Prisma AutomationStatus enum
+    raw_status = (v.get("status") or "DRAFT").upper()
+    if raw_status == "INACTIVE":
+        raw_status = "DRAFT"
     return {
         "projectId": ensure_uuid(v.get("projectId") or "1d9f2e3a-6f0a-4b9a-bbcb-7c73a1d9e001"),
-        "name": v.get("name") or "Unnamed Automation",
-        "trigger": (v.get("trigger") or "MANUAL").upper()
+        "name":      v.get("name") or "Unnamed Automation",
+        "trigger":   (v.get("trigger") or "MANUAL").upper(),
+        "status":    raw_status,
     }
 
 def map_case_flow(v):
@@ -466,6 +581,13 @@ def map_case_flow(v):
         "title": v.get("title") or "Unnamed Case",
         "status": (v.get("status") or "OPEN").upper(),
         "priority": (v.get("priority") or "MEDIUM").upper()
+    }
+
+def map_workflow_execution(v):
+    return {
+        "playbookId": ensure_uuid(v.get("playbookId") or ""),
+        "status": (v.get("status") or "RUNNING").upper(),
+        "progress": int(v.get("progress") or 0),
     }
 
 def map_threat_actor(v):

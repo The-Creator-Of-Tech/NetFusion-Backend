@@ -6,9 +6,98 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PlaybookRepository = void 0;
 const BaseRepository_1 = require("../base/BaseRepository");
 const prisma_1 = __importDefault(require("../../lib/prisma"));
+const utils_1 = require("../base/utils");
 class PlaybookRepository extends BaseRepository_1.BaseRepository {
     constructor() {
         super('playbook');
+    }
+    async create(data, tx) {
+        const client = tx || prisma_1.default;
+        const { steps, ...playbookData } = data;
+        return (0, utils_1.executeSafely)(async () => {
+            return client.$transaction(async (transaction) => {
+                const createdPlaybook = await transaction.playbook.create({ data: playbookData });
+                if (steps && Array.isArray(steps)) {
+                    for (const step of steps) {
+                        const stepId = step.id || step.stepId || undefined;
+                        const { id: dummyId, stepId: dummyStepId, ...stepData } = step;
+                        await transaction.playbookStep.create({
+                            data: {
+                                ...stepData,
+                                id: stepId,
+                                playbookId: createdPlaybook.id,
+                                createdBy: createdPlaybook.createdBy || 'test-user',
+                                updatedBy: createdPlaybook.updatedBy || 'test-user',
+                            }
+                        });
+                    }
+                }
+                return createdPlaybook;
+            });
+        });
+    }
+    async update(id, data, tx) {
+        const client = tx || prisma_1.default;
+        const { steps, ...playbookData } = data;
+        return (0, utils_1.executeSafely)(async () => {
+            return client.$transaction(async (transaction) => {
+                const updatedPlaybook = await transaction.playbook.update({
+                    where: { id },
+                    data: playbookData,
+                });
+                if (steps !== undefined) {
+                    // Hard delete old steps
+                    await transaction.playbookStep.deleteMany({
+                        where: { playbookId: id }
+                    });
+                    if (Array.isArray(steps)) {
+                        for (const step of steps) {
+                            const stepId = step.id || step.stepId || undefined;
+                            const { id: dummyId, stepId: dummyStepId, ...stepData } = step;
+                            await transaction.playbookStep.create({
+                                data: {
+                                    ...stepData,
+                                    id: stepId,
+                                    playbookId: id,
+                                    createdBy: updatedPlaybook.updatedBy || 'test-user',
+                                    updatedBy: updatedPlaybook.updatedBy || 'test-user',
+                                }
+                            });
+                        }
+                    }
+                }
+                return updatedPlaybook;
+            });
+        });
+    }
+    async findById(id, tx) {
+        const client = tx || prisma_1.default;
+        return (0, utils_1.executeSafely)(() => client.playbook.findUnique({
+            where: { id },
+            include: {
+                steps: {
+                    where: { deletedAt: null },
+                    orderBy: { stepNumber: 'asc' },
+                },
+            },
+        }));
+    }
+    async findMany(options, tx) {
+        const client = tx || prisma_1.default;
+        const where = (0, utils_1.buildFilterArgs)(options?.filter);
+        const orderBy = (0, utils_1.buildSortArgs)(options?.sort);
+        return (0, utils_1.executeSafely)(() => client.playbook.findMany({
+            where,
+            ...(orderBy && { orderBy }),
+            ...(options?.offset !== undefined && { skip: options.offset }),
+            ...(options?.limit !== undefined && { take: options.limit }),
+            include: {
+                steps: {
+                    where: { deletedAt: null },
+                    orderBy: { stepNumber: 'asc' },
+                },
+            },
+        }));
     }
     /**
      * Finds playbooks by project ID where not deleted.

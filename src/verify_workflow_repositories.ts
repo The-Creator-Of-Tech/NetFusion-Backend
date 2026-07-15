@@ -170,7 +170,7 @@ async function main(): Promise<void> {
 
     testPlaybookStep1 = await prisma.playbookStep.create({
       data: {
-        playbookId: testPlaybook1.id,
+        playbookId: testPlaybook1!.id,
         stepNumber: 1,
         stepKey: 'step-1-phish',
         title: `Verify Email Headers ${RUN}`,
@@ -183,7 +183,7 @@ async function main(): Promise<void> {
 
     testPlaybookStep2 = await prisma.playbookStep.create({
       data: {
-        playbookId: testPlaybook1.id,
+        playbookId: testPlaybook1!.id,
         stepNumber: 2,
         stepKey: 'step-2-phish',
         title: 'Block Sender Address',
@@ -194,7 +194,7 @@ async function main(): Promise<void> {
       }
     });
 
-    assert(!!testPlaybook1.id && !!testPlaybook2.id && !!testPlaybookStep1.id && !!testPlaybookStep2.id, 'Playbook entities created successfully');
+    assert(!!testPlaybook1!.id && !!testPlaybook2!.id && !!testPlaybookStep1!.id && !!testPlaybookStep2!.id, 'Playbook entities created successfully');
 
     // findByProject
     const byProj = await playbookRepository.findByProject(testProject.id);
@@ -226,7 +226,7 @@ async function main(): Promise<void> {
     assert(drafts.some(p => p.id === testPlaybook1!.id), 'findDrafts resolves drafts');
 
     // findWithSteps
-    const playbookWithSteps = await playbookRepository.findWithSteps(testPlaybook1.id);
+    const playbookWithSteps = await playbookRepository.findWithSteps(testPlaybook1!.id);
     assert(playbookWithSteps?.steps?.length === 2, 'findWithSteps resolves playbook with nested steps');
 
     // searchSteps
@@ -234,7 +234,7 @@ async function main(): Promise<void> {
     assert(stepsFound.some(s => s.id === testPlaybookStep1!.id), 'searchSteps filters by search query');
 
     // findStep
-    const stepObj = await playbookRepository.findStep(testPlaybookStep1.id);
+    const stepObj = await playbookRepository.findStep(testPlaybookStep1!.id);
     assert(stepObj?.stepKey === 'step-1-phish', 'findStep resolves correct step');
 
     // calculateStatistics

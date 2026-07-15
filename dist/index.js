@@ -1245,6 +1245,7 @@ const allRepos = {
     automationExecution: new PrismaRepoWrapper(prisma_1.default.automationExecution),
     caseFlowStep: new PrismaRepoWrapper(prisma_1.default.caseFlowStep),
     caseFlowExecution: new PrismaRepoWrapper(prisma_1.default.caseFlowExecution),
+    workflowExecution: new PrismaRepoWrapper(prisma_1.default.workflowExecution),
     threatCampaign: new PrismaRepoWrapper(prisma_1.default.threatCampaign),
     threatRelationship: new PrismaRepoWrapper(prisma_1.default.threatRelationship),
     mitreTactic: new PrismaRepoWrapper(prisma_1.default.mitreTactic),
@@ -1457,6 +1458,43 @@ app.post("/api/repository/transaction", async (req, res) => {
     }
 });
 // =============================================================================
+// =============================================================================
+// WORKFLOW EXECUTION ENDPOINTS
+// GET /api/projects/:projectId/workflow/executions
+// Returns all WorkflowExecution records for playbooks belonging to the project,
+// ordered by startedAt descending, mapped to the WorkflowExecution interface.
+// =============================================================================
+app.get("/api/projects/:projectId/workflow/executions", async (req, res) => {
+    const { projectId } = req.params;
+    try {
+        const rows = await prisma_1.default.workflowExecution.findMany({
+            where: {
+                deletedAt: null,
+                playbook: { projectId },
+            },
+            orderBy: { startedAt: "desc" },
+        });
+        const executions = rows.map((r) => ({
+            executionId: r.id,
+            playbookId: r.playbookId,
+            status: r.status,
+            progress: r.progress,
+            logs: r.logs ?? [],
+            startedAt: r.startedAt ? r.startedAt.toISOString() : null,
+            finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
+            triggeredBy: r.triggeredBy ?? null,
+            totalSteps: r.totalSteps,
+            completedSteps: r.completedSteps,
+            failedSteps: r.failedSteps,
+            stepResults: r.stepResults ?? null,
+        }));
+        return res.json({ executions, total: executions.length });
+    }
+    catch (err) {
+        console.error("GET /api/projects/:projectId/workflow/executions error:", err);
+        return res.status(500).json({ error: err.message || String(err) });
+    }
+});
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
     console.log(`Capture persistence API listening on port ${port}`);

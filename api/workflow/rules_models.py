@@ -1,7 +1,19 @@
 """
-Rules API Models — Phase A4.10.2
-==================================
-Immutable Pydantic models for Rules request and response contracts.
+Rules API Models — Canonical Schema (Aligned with Prisma)
+==========================================================
+All fields derived from Prisma Rule / RuleCondition / RuleAction models.
+
+Prisma canonical types:
+  - Rule.severity → RuleSeverity  (LOW | MEDIUM | HIGH | CRITICAL)
+  - Rule.status   → RuleStatus    (DRAFT | ACTIVE | DISABLED | ARCHIVED)
+  - RuleAction.actionType → plain String (no Prisma enum constraint)
+  - RuleCondition.operator → plain String
+
+API-only derived fields (not Prisma columns, stored in metadata):
+  - ruleKey, conditionKey
+
+Fields present in Prisma but not exposed in requests:
+  - createdBy, updatedBy, version, deletedAt, metadata
 """
 
 from __future__ import annotations
@@ -9,19 +21,20 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
+_VALID_SEVERITY = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+_VALID_STATUS   = {"DRAFT", "ACTIVE", "DISABLED", "ARCHIVED"}
+
 
 # ===========================================================================
-# Sub-models & Response structures
+# Condition sub-models
 # ===========================================================================
 
 class RuleConditionRequest(BaseModel):
-    """
-    Request model representing a rule condition to evaluate.
-    """
-    field      : str
-    operator   : str
-    value      : str
-    createdAt  : str
+    """Maps to Prisma RuleCondition (field, operator, value)."""
+    field     : str
+    operator  : str
+    value     : str
+    createdAt : str
 
     class Config:
         frozen = True
@@ -41,7 +54,9 @@ class RuleConditionRequest(BaseModel):
 
 class RuleConditionResponse(BaseModel):
     """
-    Response model representing a rule condition.
+    Prisma RuleCondition columns + API-only derived fields.
+    conditionId  → Prisma id (UUID)
+    conditionKey → derived (SHA-256), stored in metadata
     """
     conditionId  : str
     conditionKey : str
@@ -54,9 +69,14 @@ class RuleConditionResponse(BaseModel):
         frozen = True
 
 
+# ===========================================================================
+# Action sub-models
+# ===========================================================================
+
 class RuleActionRequest(BaseModel):
     """
-    Request model representing an action triggered by matching a rule.
+    Maps to Prisma RuleAction (actionType String, parameters Json?).
+    actionType is a free String in Prisma — no enum constraint at DB level.
     """
     actionType : str
     parameters : Optional[Dict[str, Any]] = Field(default_factory=dict)
@@ -68,18 +88,13 @@ class RuleActionRequest(BaseModel):
         errors: List[str] = []
         if not self.actionType or not self.actionType.strip():
             errors.append("actionType must not be empty.")
-        else:
-            from services.rules_engine_service import RuleActionEnum
-            try:
-                RuleActionEnum(self.actionType.strip().upper())
-            except ValueError:
-                errors.append(f"actionType must be a RuleActionEnum member; got {self.actionType!r}.")
         return errors
 
 
 class RuleActionResponse(BaseModel):
     """
-    Response model representing a triggered action.
+    Prisma RuleAction columns + API-only derived actionId alias.
+    actionId → Prisma id (UUID)
     """
     actionId   : str
     actionType : str
@@ -89,10 +104,11 @@ class RuleActionResponse(BaseModel):
         frozen = True
 
 
+# ===========================================================================
+# Summary response
+# ===========================================================================
+
 class RuleSummaryResponse(BaseModel):
-    """
-    Response model carrying structured summary details for a rule.
-    """
     ruleId         : str
     ruleName       : str
     summaryText    : str
@@ -108,27 +124,28 @@ class RuleSummaryResponse(BaseModel):
 
 
 # ===========================================================================
-# Request Models
+# Create / Update requests
 # ===========================================================================
 
 class CreateRuleRequest(BaseModel):
     """
-    Request body for POST /api/v2/workflow/rules.
+    POST /api/v2/workflow/rules
+    projectId is required in Prisma (non-nullable UUID).
     """
     name            : str
-    description     : Optional[str] = ""
-    severity        : str
-    status          : str
+    description     : Optional[str]                 = ""
+    severity        : str                           # RuleSeverity
+    status          : str                           # RuleStatus
+    projectId       : str                           # required — Prisma non-nullable
+    investigationId : Optional[str]                 = None
     conditions      : Optional[List[RuleConditionRequest]] = Field(default_factory=list)
-    actions         : Optional[List[RuleActionRequest]] = Field(default_factory=list)
-    priority        : Optional[int] = 100
+    actions         : Optional[List[RuleActionRequest]]    = Field(default_factory=list)
+    priority        : Optional[int]                 = 100
     createdAt       : str
-    enabled         : Optional[bool] = True
-    category        : Optional[str] = ""
-    author          : Optional[str] = ""
-    projectId       : Optional[str] = ""
-    investigationId : Optional[str] = ""
-    updatedAt       : Optional[str] = None
+    enabled         : Optional[bool]                = True
+    category        : Optional[str]                 = ""
+    author          : Optional[str]                 = ""
+    updatedAt       : Optional[str]                 = None
 
     class Config:
         frozen = True
@@ -137,134 +154,112 @@ class CreateRuleRequest(BaseModel):
         errors: List[str] = []
         if not self.name or not self.name.strip():
             errors.append("name must not be empty.")
+        if not self.projectId or not self.projectId.strip():
+            errors.append("projectId must not be empty.")
         if not self.severity or not self.severity.strip():
             errors.append("severity must not be empty.")
-        else:
-            from services.rules_engine_service import RuleSeverityEnum
-            try:
-                RuleSeverityEnum(self.severity.strip().upper())
-            except ValueError:
-                errors.append(f"severity must be a RuleSeverityEnum member; got {self.severity!r}.")
+        elif self.severity.strip().upper() not in _VALID_SEVERITY:
+            errors.append(
+                f"severity must be one of {sorted(_VALID_SEVERITY)}; got {self.severity!r}."
+            )
         if not self.status or not self.status.strip():
             errors.append("status must not be empty.")
-        else:
-            from services.rules_engine_service import RuleStatusEnum
-            try:
-                RuleStatusEnum(self.status.strip().upper())
-            except ValueError:
-                errors.append(f"status must be a RuleStatusEnum member; got {self.status!r}.")
+        elif self.status.strip().upper() not in _VALID_STATUS:
+            errors.append(
+                f"status must be one of {sorted(_VALID_STATUS)}; got {self.status!r}."
+            )
         if not isinstance(self.priority, int) or self.priority < 1:
             errors.append(f"priority={self.priority!r} must be a positive integer (>= 1).")
         if not self.createdAt or not self.createdAt.strip():
             errors.append("createdAt must not be empty.")
-
         for i, c in enumerate(self.conditions or []):
-            sub = c.validate_request()
-            for e in sub:
+            for e in c.validate_request():
                 errors.append(f"conditions[{i}]: {e}")
         for i, a in enumerate(self.actions or []):
-            sub = a.validate_request()
-            for e in sub:
+            for e in a.validate_request():
                 errors.append(f"actions[{i}]: {e}")
         return errors
 
 
 class UpdateRuleRequest(BaseModel):
-    """
-    Request body for PUT /api/v2/workflow/rules/{ruleId}.
-    """
-    name            : Optional[str] = None
-    description     : Optional[str] = None
-    severity        : Optional[str] = None
-    status          : Optional[str] = None
+    """PUT /api/v2/workflow/rules/{ruleId}"""
+    name            : Optional[str]                 = None
+    description     : Optional[str]                 = None
+    severity        : Optional[str]                 = None
+    status          : Optional[str]                 = None
+    projectId       : Optional[str]                 = None
+    investigationId : Optional[str]                 = None
     conditions      : Optional[List[RuleConditionRequest]] = None
-    actions         : Optional[List[RuleActionRequest]] = None
-    priority        : Optional[int] = None
-    enabled         : Optional[bool] = None
-    category        : Optional[str] = None
-    author          : Optional[str] = None
-    projectId       : Optional[str] = None
-    investigationId : Optional[str] = None
-    updatedAt       : Optional[str] = None
+    actions         : Optional[List[RuleActionRequest]]    = None
+    priority        : Optional[int]                 = None
+    enabled         : Optional[bool]                = None
+    category        : Optional[str]                 = None
+    author          : Optional[str]                 = None
+    updatedAt       : Optional[str]                 = None
 
     class Config:
         frozen = True
 
     def has_any_field(self) -> bool:
-        return any(
-            v is not None
-            for k, v in self.model_dump().items()
-        )
+        return any(v is not None for v in self.model_dump().values())
 
     def validate_request(self) -> List[str]:
         errors: List[str] = []
         if self.severity is not None:
             if not self.severity.strip():
                 errors.append("severity must not be empty.")
-            else:
-                from services.rules_engine_service import RuleSeverityEnum
-                try:
-                    RuleSeverityEnum(self.severity.strip().upper())
-                except ValueError:
-                    errors.append(f"severity must be a RuleSeverityEnum member; got {self.severity!r}.")
+            elif self.severity.strip().upper() not in _VALID_SEVERITY:
+                errors.append(
+                    f"severity must be one of {sorted(_VALID_SEVERITY)}; got {self.severity!r}."
+                )
         if self.status is not None:
             if not self.status.strip():
                 errors.append("status must not be empty.")
-            else:
-                from services.rules_engine_service import RuleStatusEnum
-                try:
-                    RuleStatusEnum(self.status.strip().upper())
-                except ValueError:
-                    errors.append(f"status must be a RuleStatusEnum member; got {self.status!r}.")
-        if self.priority is not None:
-            if not isinstance(self.priority, int) or self.priority < 1:
-                errors.append(f"priority={self.priority!r} must be a positive integer (>= 1).")
+            elif self.status.strip().upper() not in _VALID_STATUS:
+                errors.append(
+                    f"status must be one of {sorted(_VALID_STATUS)}; got {self.status!r}."
+                )
+        if self.priority is not None and (not isinstance(self.priority, int) or self.priority < 1):
+            errors.append(f"priority={self.priority!r} must be a positive integer (>= 1).")
         if self.conditions is not None:
             for i, c in enumerate(self.conditions):
-                sub = c.validate_request()
-                for e in sub:
+                for e in c.validate_request():
                     errors.append(f"conditions[{i}]: {e}")
         if self.actions is not None:
             for i, a in enumerate(self.actions):
-                sub = a.validate_request()
-                for e in sub:
+                for e in a.validate_request():
                     errors.append(f"actions[{i}]: {e}")
         return errors
 
 
 # ===========================================================================
-# Response Models
+# Response models
 # ===========================================================================
 
 class RuleResponse(BaseModel):
-    """
-    Response model carrying rule details.
-    """
+    """Full Rule response. Mirrors Prisma Rule + conditions + actions."""
     ruleId          : str
-    ruleKey         : str
+    ruleKey         : str           # derived, stored in metadata
     name            : str
     description     : str
-    severity        : str
-    status          : str
+    severity        : str           # RuleSeverity
+    status          : str           # RuleStatus
+    projectId       : str
+    investigationId : str
     conditions      : List[RuleConditionResponse]
     actions         : List[RuleActionResponse]
     priority        : int
     createdAt       : str
     updatedAt       : Optional[str] = None
-    enabled         : bool = True
-    category        : str = ""
-    author          : str = ""
-    projectId       : str = ""
-    investigationId : str = ""
+    enabled         : bool          = True
+    category        : str           = ""
+    author          : str           = ""
 
     class Config:
         frozen = True
 
 
 class RuleListResponse(BaseModel):
-    """
-    Payload for GET /api/v2/workflow/rules.
-    """
     rules : List[RuleResponse]
     total : int
 
@@ -273,9 +268,6 @@ class RuleListResponse(BaseModel):
 
 
 class RuleStatisticsResponse(BaseModel):
-    """
-    Payload for GET /api/v2/workflow/rules/statistics.
-    """
     totalRules        : int
     enabledRules      : int
     disabledRules     : int
@@ -289,9 +281,6 @@ class RuleStatisticsResponse(BaseModel):
 
 
 class RuleSearchResponse(BaseModel):
-    """
-    Payload for GET /api/v2/workflow/rules/search.
-    """
     rules      : List[RuleResponse]
     total      : int
     page       : int
@@ -306,13 +295,10 @@ class RuleSearchResponse(BaseModel):
 
 
 # ===========================================================================
-# Bulk Operation Models
+# Bulk operation models
 # ===========================================================================
 
 class BulkCreateRulesRequest(BaseModel):
-    """
-    Request body for POST /api/v2/workflow/rules/bulk/create.
-    """
     rules : List[CreateRuleRequest] = Field(..., min_length=1)
 
     class Config:
@@ -323,16 +309,12 @@ class BulkCreateRulesRequest(BaseModel):
         if not self.rules:
             errors.append("rules list must not be empty.")
         for i, item in enumerate(self.rules):
-            sub = item.validate_request()
-            for e in sub:
+            for e in item.validate_request():
                 errors.append(f"rules[{i}]: {e}")
         return errors
 
 
 class BulkUpdateRulesRequest(BaseModel):
-    """
-    Request body for PUT /api/v2/workflow/rules/bulk/update.
-    """
     class BulkUpdateItem(BaseModel):
         ruleId : str
         update : UpdateRuleRequest
@@ -354,16 +336,12 @@ class BulkUpdateRulesRequest(BaseModel):
                 errors.append(f"items[{i}]: ruleId must not be empty.")
             if not item.update.has_any_field():
                 errors.append(f"items[{i}]: update must contain at least one field.")
-            sub = item.update.validate_request()
-            for e in sub:
+            for e in item.update.validate_request():
                 errors.append(f"items[{i}]: {e}")
         return errors
 
 
 class BulkDeleteRulesRequest(BaseModel):
-    """
-    Request body for DELETE /api/v2/workflow/rules/bulk/delete.
-    """
     ruleIds : List[str] = Field(..., min_length=1)
 
     class Config:
@@ -380,9 +358,6 @@ class BulkDeleteRulesRequest(BaseModel):
 
 
 class BulkOperationResult(BaseModel):
-    """
-    Result summary returned by bulk operation endpoints.
-    """
     succeeded    : List[str]
     failed       : List[Dict[str, str]]
     total        : int

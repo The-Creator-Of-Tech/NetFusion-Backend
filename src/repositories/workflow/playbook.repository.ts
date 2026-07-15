@@ -1,10 +1,112 @@
 import { BaseRepository } from '../base/BaseRepository';
 import { Playbook, PlaybookStep, PlaybookStatus, Prisma } from '@prisma/client';
 import prisma from '../../lib/prisma';
+import { buildFilterArgs, buildSortArgs, executeSafely } from '../base/utils';
 
 export class PlaybookRepository extends BaseRepository<Playbook, Prisma.PlaybookUncheckedCreateInput, Prisma.PlaybookUncheckedUpdateInput> {
   constructor() {
     super('playbook');
+  }
+
+  override async create(data: any, tx?: any): Promise<any> {
+    const client = tx || prisma;
+    const { steps, ...playbookData } = data;
+    
+    return executeSafely(async () => {
+      return client.$transaction(async (transaction: any) => {
+        const createdPlaybook = await transaction.playbook.create({ data: playbookData });
+        
+        if (steps && Array.isArray(steps)) {
+          for (const step of steps) {
+            const stepId = step.id || step.stepId || undefined;
+            const { id: dummyId, stepId: dummyStepId, ...stepData } = step;
+            await transaction.playbookStep.create({
+              data: {
+                ...stepData,
+                id: stepId,
+                playbookId: createdPlaybook.id,
+                createdBy: createdPlaybook.createdBy || 'test-user',
+                updatedBy: createdPlaybook.updatedBy || 'test-user',
+              }
+            });
+          }
+        }
+        return createdPlaybook;
+      });
+    });
+  }
+
+  override async update(id: string, data: any, tx?: any): Promise<any> {
+    const client = tx || prisma;
+    const { steps, ...playbookData } = data;
+
+    return executeSafely(async () => {
+      return client.$transaction(async (transaction: any) => {
+        const updatedPlaybook = await transaction.playbook.update({
+          where: { id },
+          data: playbookData,
+        });
+
+        if (steps !== undefined) {
+          // Hard delete old steps
+          await transaction.playbookStep.deleteMany({
+            where: { playbookId: id }
+          });
+
+          if (Array.isArray(steps)) {
+            for (const step of steps) {
+              const stepId = step.id || step.stepId || undefined;
+              const { id: dummyId, stepId: dummyStepId, ...stepData } = step;
+              await transaction.playbookStep.create({
+                data: {
+                  ...stepData,
+                  id: stepId,
+                  playbookId: id,
+                  createdBy: updatedPlaybook.updatedBy || 'test-user',
+                  updatedBy: updatedPlaybook.updatedBy || 'test-user',
+                }
+              });
+            }
+          }
+        }
+        return updatedPlaybook;
+      });
+    });
+  }
+
+  override async findById(id: string, tx?: any): Promise<any | null> {
+    const client = tx || prisma;
+    return executeSafely(() =>
+      client.playbook.findUnique({
+        where: { id },
+        include: {
+          steps: {
+            where: { deletedAt: null },
+            orderBy: { stepNumber: 'asc' },
+          },
+        },
+      })
+    );
+  }
+
+  override async findMany(options?: any, tx?: any): Promise<any[]> {
+    const client = tx || prisma;
+    const where = buildFilterArgs(options?.filter);
+    const orderBy = buildSortArgs(options?.sort);
+    return executeSafely(() =>
+      client.playbook.findMany({
+        where,
+        ...(orderBy && { orderBy }),
+        ...(options?.offset !== undefined && { skip: options.offset }),
+        ...(options?.limit !== undefined && { take: options.limit }),
+        include: {
+          steps: {
+            where: { deletedAt: null },
+            orderBy: { stepNumber: 'asc' },
+          },
+        },
+      })
+    );
   }
 
   /**

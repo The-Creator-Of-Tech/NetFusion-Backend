@@ -1853,6 +1853,13 @@ enum AutomationExecutionStatus {
   FAILED
 }
 
+enum WorkflowExecutionStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  ABORTED
+}
+
 enum CaseStatus {
   OPEN
   IN_PROGRESS
@@ -1899,14 +1906,16 @@ enum StepType {
   CONTAINMENT
   ERADICATION
   RECOVERY
-  
+
   // Case Flow Step Types
   CREATED
   ASSIGNED
   INVESTIGATED
+  CONTAINED      // added: matches CaseStepTypeEnum.CONTAINED
+  ERADICATED     // added: matches CaseStepTypeEnum.ERADICATED
   RECOVERED
   CLOSED
-  
+
   // Automation Step Types (Actions)
   CREATE_ALERT
   CREATE_TIMELINE_EVENT
@@ -1945,6 +1954,7 @@ model Playbook {
   steps           PlaybookStep[]
   automations     Automation[]
   caseFlows       CaseFlow[]
+  executions      WorkflowExecution[]
 
   @@index([projectId])
   @@index([investigationId])
@@ -2271,6 +2281,39 @@ model CaseFlowExecution {
   @@index([createdAt])
   @@index([updatedAt])
   @@map("case_flow_executions")
+}
+
+model WorkflowExecution {
+  id              String                  @id @default(uuid()) @db.Uuid
+  playbookId      String                  @db.Uuid
+  status          WorkflowExecutionStatus @default(RUNNING)
+  progress        Int                     @default(0)
+  logs            Json?                   @default("[]")
+  startedAt       DateTime                @default(now())
+  finishedAt      DateTime?
+  triggeredBy     String?
+  totalSteps      Int                     @default(0)
+  completedSteps  Int                     @default(0)
+  failedSteps     Int                     @default(0)
+  stepResults     Json?
+
+  // Common fields
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  deletedAt       DateTime?
+  createdBy       String
+  updatedBy       String
+  version         Int                     @default(1)
+  metadata        Json?
+
+  // Relations
+  playbook        Playbook                @relation(fields: [playbookId], references: [id], onDelete: Cascade)
+
+  @@index([playbookId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("workflow_executions")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2631,6 +2674,3 @@ model ApiKey {
   @@index([updatedAt])
   @@map("api_keys")
 }
-
-
-
