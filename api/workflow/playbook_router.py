@@ -9,7 +9,7 @@ import math, uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, BackgroundTasks
 from api.errors import (
     APILayerError, APIErrorConflict, APIErrorInternal,
     APIErrorNotFound, APIErrorValidation,
@@ -572,225 +572,47 @@ def get_summary(playbookId: str) -> APIResponse:
 
 @playbook_router.post("/{playbookId}/execute", response_model=APIResponse,
                       status_code=201, summary="Execute a playbook")
-def execute_playbook(playbookId: str) -> APIResponse:
+def execute_playbook(playbookId: str, background_tasks: BackgroundTasks) -> APIResponse:
     """
-    Execute Endpoint → WorkflowExecution record created (RUNNING) →
-    Execute every PlaybookStep → Update progress → Append logs →
-    Persist updates → Mark COMPLETED or FAILED → Record finishedAt.
+    Execute Endpoint → Create WorkflowExecution record (QUEUED) →
+    Queue execution in background task → Return queued execution record immediately.
     """
-    import logging as _logging
-    _dbg = _logging.getLogger("execute_playbook.debug")
-    if not _dbg.handlers:
-        _h = _logging.StreamHandler()
-        _h.setFormatter(_logging.Formatter("[DBG execute_playbook] %(message)s"))
-        _dbg.addHandler(_h)
-    _dbg.setLevel(_logging.DEBUG)
-
     try:
-        # ── 1. Locate the playbook ──────────────────────────────────────────
-        c = _find(_all(), playbookId)
-        if not c:
+        from services.workflow_execution_service import WorkflowExecutionManager
+        
+        ctx = WorkflowExecutionManager.create_execution(playbookId)
+        if not ctx:
             raise APIErrorNotFound(f"Playbook '{playbookId}' not found.")
-
-        steps: List[Dict[str, Any]] = c.get("steps") or []
-        total_steps = len(steps)
-
-        # ── DEBUG: resolved playbook identity ──────────────────────────────
-        _dbg.debug("RESOLVED playbook  id=%r  name=%r", c["playbookId"], c["name"])
-        _dbg.debug("STEPS ARRAY  len=%d  steps=%s", total_steps, steps)
-        started_at = datetime.utcnow().isoformat() + "Z"
-        execution_id = str(uuid.uuid4())
-
-        # ── 2. Create initial WorkflowExecution record (RUNNING, progress=0) ─
-        _dbg.debug("CREATING execution  id=%r  playbookId=%r", execution_id, c["playbookId"])
-        initial_record: Dict[str, Any] = {
-            "executionId": execution_id,
-            "playbookId": c["playbookId"],
-            "status": "RUNNING",
-            "progress": 0,
-            "logs": [],
-            "startedAt": started_at,
-            "finishedAt": None,
-            "triggeredBy": "manual",
-            "totalSteps": total_steps,
-            "completedSteps": 0,
-            "failedSteps": 0,
-            "stepResults": [],
-        }
-        _EXECUTION_STORE.create(initial_record)
-
-        # ── DEBUG: confirm store.create returned ───────────────────────────
-        _dbg.debug("STORE.create() returned (initial record persisted)")
-
-        # ── 3. Execute each PlaybookStep sequentially ───────────────────────
-        logs: List[Dict[str, Any]] = []
-        step_results: List[Dict[str, Any]] = []
-        completed_steps = 0
-        failed_steps = 0
-        final_status = "COMPLETED"
-
-        def _append_log(level: str, message: str) -> None:
-            logs.append({
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "level": level,
-                "message": message,
-            })
-
-        _append_log("INFO", f"Execution started for playbook '{c['name']}' "
-                            f"({total_steps} step(s)).")
-
-        for i, step in enumerate(steps):
-            step_id     = step.get("stepId", f"step-{i+1}")
-            step_number = step.get("stepNumber", i + 1)
-            step_title  = step.get("title", f"Step {step_number}")
-            step_type   = step.get("stepType", "MANUAL")
-
-            # ── DEBUG: loop iteration ──────────────────────────────────────
-            _dbg.debug("LOOP iteration i=%d  stepId=%r  stepNumber=%r  title=%r  stepType=%r",
-                       i, step_id, step_number, step_title, step_type)
-
-            _append_log("INFO", f"[{step_number}/{total_steps}] Starting step: "
-                                f"{step_title} (type={step_type})")
-
-            step_result: Dict[str, Any] = {
-                "stepId": step_id,
-                "stepNumber": step_number,
-                "title": step_title,
-                "stepType": step_type,
-                "status": "EXECUTED",
-                "executedAt": datetime.utcnow().isoformat() + "Z",
-                "outputs": {},
-            }
-
-            try:
-                # Simulate deterministic step execution.
-                # For AUTOMATED steps we record expected outcome as output.
-                # MANUAL steps are recorded as-is (requires human action in production).
-                expected_outcome = step.get("expectedOutcome") or ""
-                if expected_outcome:
-                    step_result["outputs"]["expectedOutcome"] = expected_outcome
-
-                related_techniques = step.get("relatedTechniques") or []
-                if related_techniques:
-                    step_result["outputs"]["relatedTechniques"] = related_techniques
-
-                completed_steps += 1
-                progress = int((completed_steps / total_steps) * 100) if total_steps else 100
-                _append_log("INFO", f"[{step_number}/{total_steps}] Completed step: "
-                                    f"{step_title} (progress={progress}%)")
-
-                # ── Persist incremental progress after each step ────────────
-                _update_payload = {
-                    "progress": progress,
-                    "logs": logs[:],
-                    "completedSteps": completed_steps,
-                    "failedSteps": failed_steps,
-                    "stepResults": step_results + [step_result],
-                }
-                _dbg.debug("STORE.update() CALL  executionId=%r  payload=%s",
-                           execution_id, _update_payload)
-                _update_result = _EXECUTION_STORE.update(execution_id, _update_payload)
-                _dbg.debug("STORE.update() RETURNED  result=%r", _update_result)
-
-            except Exception as step_err:
-                step_result["status"] = "FAILED"
-                step_result["error"] = str(step_err)
-                failed_steps += 1
-                final_status = "FAILED"
-                _append_log("ERROR", f"[{step_number}/{total_steps}] Step FAILED: "
-                                     f"{step_title} — {step_err}")
-
-            step_results.append(step_result)
-
-        # ── 4. Finalize execution ───────────────────────────────────────────
-        finished_at = datetime.utcnow().isoformat() + "Z"
-        final_progress = 100 if final_status == "COMPLETED" else int(
-            (completed_steps / total_steps) * 100) if total_steps else 0
-
-        _append_log(
-            "INFO" if final_status == "COMPLETED" else "ERROR",
-            f"Execution {final_status}. "
-            f"Steps: {completed_steps} completed, {failed_steps} failed."
-        )
-
-        # ── DEBUG: final store.update call ─────────────────────────────────
-        _final_update_payload = {
-            "status": final_status,
-            "progress": final_progress,
-            "logs": logs,
-            "finishedAt": finished_at,
-            "completedSteps": completed_steps,
-            "failedSteps": failed_steps,
-            "stepResults": step_results,
-        }
-        _dbg.debug("FINAL STORE.update() CALL  executionId=%r  payload=%s",
-                   execution_id, _final_update_payload)
-        _final_update_result = _EXECUTION_STORE.update(execution_id, _final_update_payload)
-        _dbg.debug("FINAL STORE.update() RETURNED  result=%r", _final_update_result)
-
-        # ── 5. Emit timeline audit event via persistence layer ──────────────
-        try:
-            from api.persistence import call_repository, ensure_uuid, map_timeline_event
-            project_id = c.get("projectId") or ""
-            investigation_id = c.get("investigationId") or ""
-            if project_id:
-                event_payload = {
-                    "projectId": project_id,
-                    "investigationId": investigation_id or project_id,
-                    "title": f"Playbook Execution {final_status}: {c['name']}",
-                    "description": (
-                        f"Playbook '{c['name']}' executed with {total_steps} steps. "
-                        f"Result: {final_status}. "
-                        f"Completed: {completed_steps}, Failed: {failed_steps}."
-                    ),
-                    "type": "MANUAL_ACTION",
-                    "createdBy": "system",
-                    "updatedBy": "system",
-                }
-                mapped = map_timeline_event(event_payload)
-                event_payload.update(mapped)
-                call_repository("timelineEvent", "create", {"data": event_payload})
-        except Exception:
-            pass  # Timeline emission is best-effort; never fail execution
-
-        # ── 6. Return the persisted execution record ────────────────────────
-        # Reload from the store so the response reflects what was actually
-        # persisted (including any UUID remapping done by ensure_uuid in
-        # WorkflowExecutionsStore.create/update).  If the reload fails for any
-        # reason, fall back to a locally-assembled dict so the caller always
-        # receives a useful response.
-        persisted = _EXECUTION_STORE.get_by_id(execution_id)
-        _dbg.debug("STORE.get_by_id() RETURNED  %s", persisted)
-
-        if persisted:
-            # Augment the persisted record with the human-readable playbookName
-            # (not stored in the WorkflowExecution table) so clients don't need
-            # a second round-trip.
-            result = dict(persisted)
-            result.setdefault("playbookName", c["name"])
+            
+        # Add task to background runner
+        background_tasks.add_task(WorkflowExecutionManager.run_execution_background, ctx)
+        
+        # Load from store to get the formatted record
+        record = _EXECUTION_STORE.get_by_id(ctx.execution_id)
+        if record:
+            result = dict(record)
+            result.setdefault("playbookName", ctx.playbook_name)
         else:
-            # Fallback: build from local variables (store write may have failed).
-            _dbg.debug("STORE.get_by_id() returned None — using local fallback")
             result = {
-                "executionId": execution_id,
-                "playbookId": c["playbookId"],
-                "playbookName": c["name"],
-                "status": final_status,
-                "progress": final_progress,
-                "logs": logs,
-                "startedAt": started_at,
-                "finishedAt": finished_at,
+                "executionId": ctx.execution_id,
+                "playbookId": ctx.playbook_id,
+                "playbookName": ctx.playbook_name,
+                "status": ctx.status,
+                "progress": ctx.progress,
+                "logs": ctx.logs,
+                "startedAt": ctx.started_at,
+                "finishedAt": ctx.finished_at,
                 "triggeredBy": "manual",
-                "totalSteps": total_steps,
-                "completedSteps": completed_steps,
-                "failedSteps": failed_steps,
-                "stepResults": step_results,
+                "totalSteps": ctx.total_steps,
+                "completedSteps": ctx.completed_steps,
+                "failedSteps": ctx.failed_steps,
+                "currentStep": ctx.current_step,
+                "stepResults": ctx.step_results,
             }
-
-        _dbg.debug("FINAL EXECUTION RECORD BEFORE RETURN  %s", result)
+            
         return build_success_response(
             data=result,
-            message=f"Playbook execution {final_status.lower()}.",
+            message="Playbook execution queued.",
         )
     except APILayerError as e: return exception_to_api_response(e)
     except Exception as e:     return exception_to_api_response(APIErrorInternal(str(e)))

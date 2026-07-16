@@ -1854,6 +1854,7 @@ enum AutomationExecutionStatus {
 }
 
 enum WorkflowExecutionStatus {
+  QUEUED
   RUNNING
   COMPLETED
   FAILED
@@ -2286,7 +2287,7 @@ model CaseFlowExecution {
 model WorkflowExecution {
   id              String                  @id @default(uuid()) @db.Uuid
   playbookId      String                  @db.Uuid
-  status          WorkflowExecutionStatus @default(RUNNING)
+  status          WorkflowExecutionStatus @default(QUEUED)
   progress        Int                     @default(0)
   logs            Json?                   @default("[]")
   startedAt       DateTime                @default(now())
@@ -2295,6 +2296,7 @@ model WorkflowExecution {
   totalSteps      Int                     @default(0)
   completedSteps  Int                     @default(0)
   failedSteps     Int                     @default(0)
+  currentStep     String?
   stepResults     Json?
 
   // Common fields

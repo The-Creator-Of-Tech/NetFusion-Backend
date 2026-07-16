@@ -471,6 +471,19 @@ class WorkflowExecutionsStore(dict):
         except Exception:
             return []
 
+    def get_all(self, project_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Fetch all executions, optionally filtered by project ID."""
+        try:
+            filt = {}
+            if project_id:
+                filt = {"playbook": {"projectId": ensure_uuid(project_id)}}
+            records = call_repository("workflowExecution", "findMany", {
+                "filter": filt
+            })
+            return [self._map_record(r) for r in records]
+        except Exception:
+            return []
+
     def create(self, execution: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new WorkflowExecution record."""
         execution_id = execution.get("executionId") or str(uuid.uuid4())
@@ -479,7 +492,7 @@ class WorkflowExecutionsStore(dict):
         payload = {
             "id": db_id,
             "playbookId": playbook_id,
-            "status": execution.get("status", "RUNNING"),
+            "status": execution.get("status", "QUEUED"),
             "progress": int(execution.get("progress", 0)),
             "logs": execution.get("logs", []),
             "startedAt": execution.get("startedAt") or datetime.utcnow().isoformat() + "Z",
@@ -488,6 +501,7 @@ class WorkflowExecutionsStore(dict):
             "totalSteps": int(execution.get("totalSteps", 0)),
             "completedSteps": int(execution.get("completedSteps", 0)),
             "failedSteps": int(execution.get("failedSteps", 0)),
+            "currentStep": execution.get("currentStep"),
             "stepResults": execution.get("stepResults"),
             "createdBy": execution.get("createdBy", "system"),
             "updatedBy": execution.get("updatedBy", "system"),
@@ -496,7 +510,8 @@ class WorkflowExecutionsStore(dict):
         try:
             call_repository("workflowExecution", "create", {"data": payload})
         except Exception as err:
-            print("Error creating workflow execution:", err)
+            safe_err = str(err).encode('ascii', errors='replace').decode('ascii')
+            print("Error creating workflow execution:", safe_err)
             raise
         return {"executionId": db_id, **execution}
 
@@ -507,25 +522,36 @@ class WorkflowExecutionsStore(dict):
             # Build minimal update payload — never mutate playbookId/createdAt
             update_data: Dict[str, Any] = {"updatedBy": "system"}
             for field in ("status", "progress", "logs", "finishedAt",
-                          "completedSteps", "failedSteps", "stepResults", "metadata"):
+                          "completedSteps", "failedSteps", "currentStep", "stepResults", "metadata"):
                 if field in updates:
                     update_data[field] = updates[field]
             call_repository("workflowExecution", "update", db_id, update_data)
             return True
         except Exception as err:
-            print("Error updating workflow execution:", err)
+            safe_err = str(err).encode('ascii', errors='replace').decode('ascii')
+            print("Error updating workflow execution:", safe_err)
             return False
 
     @staticmethod
     def _map_record(r: Dict[str, Any]) -> Dict[str, Any]:
         meta = r.get("metadata")
         if isinstance(meta, dict) and "executionId" in meta:
-            # record was stored with Python metadata wrapper
+            meta.setdefault("id", meta.get("executionId"))
+            meta.setdefault("refId", meta.get("playbookId"))
+            meta.setdefault("name", meta.get("playbookName", "Playbook Execution"))
+            meta.setdefault("type", "playbook")
+            meta.setdefault("completedAt", meta.get("finishedAt"))
             return meta
         return {
+            "id": r.get("id"),
+            "name": "Playbook Execution",
+            "type": "playbook",
+            "refId": r.get("playbookId"),
+            "completedAt": r.get("finishedAt"),
+            
             "executionId": r.get("id"),
             "playbookId": r.get("playbookId"),
-            "status": r.get("status", "RUNNING"),
+            "status": r.get("status", "QUEUED"),
             "progress": r.get("progress", 0),
             "logs": r.get("logs") or [],
             "startedAt": r.get("startedAt"),
@@ -534,6 +560,7 @@ class WorkflowExecutionsStore(dict):
             "totalSteps": r.get("totalSteps", 0),
             "completedSteps": r.get("completedSteps", 0),
             "failedSteps": r.get("failedSteps", 0),
+            "currentStep": r.get("currentStep"),
             "stepResults": r.get("stepResults"),
         }
 

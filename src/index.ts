@@ -1413,6 +1413,7 @@ app.get("/api/projects/:projectId/workflow/executions", async (req, res) => {
       totalSteps:     r.totalSteps,
       completedSteps: r.completedSteps,
       failedSteps:    r.failedSteps,
+      currentStep:    r.currentStep ?? null,
       stepResults:    r.stepResults ?? null,
     }));
 

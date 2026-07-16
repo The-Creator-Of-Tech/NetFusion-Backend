@@ -74,14 +74,28 @@ _PROVIDER_STORE = RepositoryBackedDict("provider", "providerId", map_provider)
 
 
 def _bootstrap_store() -> None:
-    """Populate store with built-in standard providers and models."""
+    """Populate store with built-in standard providers and models.
+
+    The repository server (port 4000) may not be running yet when the Python
+    agent starts.  Any connection error is caught so the agent can start in a
+    degraded-but-functional state; providers are still available in memory and
+    will be persisted on the first real request once the repo server is up.
+    """
     from services.provider_registry_service import build_default_registry
-    _PROVIDER_STORE.clear()
+    import requests as _requests
+
     reg = build_default_registry()
+
+    # Try to clear the persistent store; if the repo server is down, skip silently.
+    try:
+        _PROVIDER_STORE.clear()
+    except (_requests.exceptions.ConnectionError, Exception):
+        pass
+
     for prov in reg.list_providers():
         models = reg.list_models(provider_name=prov.providerName)
         max_prio = max([m.priority for m in models]) if models else 50
-        
+
         session_dict = {
             "package"      : prov,
             "models"       : {m.modelId: m for m in models},
@@ -90,7 +104,11 @@ def _bootstrap_store() -> None:
             "healthScore"  : 100.0,
             "providerType" : "local" if prov.providerName == "ollama" else "cloud",
         }
-        _PROVIDER_STORE[prov.providerId] = session_dict
+        try:
+            _PROVIDER_STORE[prov.providerId] = session_dict
+        except (_requests.exceptions.ConnectionError, Exception):
+            # Repo server unreachable — store in the dict parent (in-memory only)
+            dict.__setitem__(_PROVIDER_STORE, prov.providerId, session_dict)
 
 
 def _reset_store() -> None:

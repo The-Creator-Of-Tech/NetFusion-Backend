@@ -1,13 +1,8 @@
-"""
-conftest.py — patch outbound HTTP before any test module is collected.
-
-api.persistence calls requests.post to localhost:4000 at import time
-(via call_repository).  We must intercept this before pytest's collection
-phase imports the test file, so we use a pytest plugin hook (pytest_configure)
-which runs before collection.
-"""
+import requests
 from unittest.mock import MagicMock, patch as _patch
 
+_original_get = requests.get
+_original_post = requests.post
 
 def _make_ok_response(data=None):
     resp = MagicMock()
@@ -16,19 +11,25 @@ def _make_ok_response(data=None):
     resp.raise_for_status.return_value = None
     return resp
 
+def _patched_get(url, *args, **kwargs):
+    if "localhost:4000" in url or "127.0.0.1:4000" in url:
+        return _make_ok_response()
+    return _original_get(url, *args, **kwargs)
 
-# Start patches at plugin-registration time (before collection).
-_post_patcher = _patch("requests.post", return_value=_make_ok_response())
-_get_patcher  = _patch("requests.get",  return_value=_make_ok_response())
+def _patched_post(url, *args, **kwargs):
+    if "localhost:4000" in url or "127.0.0.1:4000" in url:
+        return _make_ok_response()
+    return _original_post(url, *args, **kwargs)
 
+_get_patcher = _patch("requests.get", new=_patched_get)
+_post_patcher = _patch("requests.post", new=_patched_post)
 
 def pytest_configure(config):
     """Called very early — before any test modules are imported."""
-    _post_patcher.start()
     _get_patcher.start()
-
+    _post_patcher.start()
 
 def pytest_unconfigure(config):
     """Clean up after the session ends."""
-    _post_patcher.stop()
     _get_patcher.stop()
+    _post_patcher.stop()

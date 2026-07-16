@@ -109,6 +109,9 @@ workflow_router.include_router(automation_router)
 
 from api.workflow.case_flow_router import case_flow_router
 workflow_router.include_router(case_flow_router)
+
+from api.workflow.execution_router import execution_router
+workflow_router.include_router(execution_router)
 """
 Workflow / automation domain router.
 
