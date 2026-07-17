@@ -171,3 +171,17 @@ def extract_http_request_lines(path: str) -> List[str]:
 def extract_dns_query_lines(path: str) -> List[str]:
     result = extract_fields(path, DNS_QUERY_FIELDS)
     return result.stdout.splitlines()
+
+
+def extract_http_host_lines(path: str) -> List[str]:
+    result = extract_fields(path, ["http.host"])
+    return result.stdout.splitlines()
+
+
+def extract_tls_session_lines(path: str) -> List[str]:
+    result = extract_fields(
+        path,
+        ["tls.handshake.extensions_server_name", "ssl.handshake.extensions_server_name"],
+    )
+    return result.stdout.splitlines()
+

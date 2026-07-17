@@ -79,6 +79,7 @@ class WorkflowExecutionContext:
     completed_steps: int = 0
     failed_steps: int = 0
     current_step: Optional[str] = None
+    current_step_number: Optional[int] = None
     status: str = "QUEUED"
     progress: int = 0
 
@@ -112,18 +113,98 @@ class WorkflowExecutionContext:
 
     # ── Variable helpers ─────────────────────────────────────────────────────
 
-    def set_variable(self, key: str, value: Any) -> None:
-        """Write a variable into the shared context."""
-        self.variables[key] = value
+    def set_variable(self, key: str, value: Any, type: Optional[str] = None) -> None:
+        """Write a variable into the shared context using structured metadata."""
+        if type is None:
+            type = self._infer_variable_type(value)
+        
+        created_by = self.current_executor or "system"
+        step_number = self.current_step_number or 0
+        created_at = datetime.utcnow().isoformat() + "Z"
+
+        self.variables[key] = {
+            "name": key,
+            "type": type,
+            "value": value,
+            "createdBy": created_by,
+            "stepNumber": step_number,
+            "createdAt": created_at
+        }
         self.updated_at = datetime.utcnow().isoformat() + "Z"
 
+    def setVariable(self, name: str, value: Any, type: Optional[str] = None) -> None:
+        """CamelCase alias for set_variable."""
+        self.set_variable(name, value, type)
+
     def get_variable(self, key: str, default: Any = None) -> Any:
-        """Read a variable from the shared context."""
-        return self.variables.get(key, default)
+        """Read a variable from the shared context. Returns raw value for backward compatibility."""
+        if key not in self.variables:
+            return default
+        val = self.variables[key]
+        if isinstance(val, dict) and "value" in val and "name" in val and "type" in val:
+            return val["value"]
+        return val
+
+    def getVariable(self, name: str) -> Any:
+        """CamelCase alias for get_variable."""
+        return self.get_variable(name)
 
     def has_variable(self, key: str) -> bool:
         """Check whether a variable exists in the shared context."""
         return key in self.variables
+
+    def hasVariable(self, name: str) -> bool:
+        """CamelCase alias for has_variable."""
+        return self.has_variable(name)
+
+    def list_variables(self) -> List[Dict[str, Any]]:
+        """Return all variables in their structured formats."""
+        res = []
+        for name, val in self.variables.items():
+            if isinstance(val, dict) and "value" in val and "name" in val and "type" in val:
+                res.append(val)
+            else:
+                # Convert legacy/flat variable on the fly
+                res.append({
+                    "name": name,
+                    "type": self._infer_variable_type(val),
+                    "value": val,
+                    "createdBy": "legacy",
+                    "stepNumber": 0,
+                    "createdAt": self.started_at
+                })
+        return res
+
+    def listVariables(self) -> List[Dict[str, Any]]:
+        """CamelCase alias for list_variables."""
+        return self.list_variables()
+
+    def _infer_variable_type(self, value: Any) -> str:
+        """Infer variable type from a Python value."""
+        if isinstance(value, bool):
+            return "boolean"
+        elif isinstance(value, (int, float)):
+            return "number"
+        elif isinstance(value, list):
+            return "array"
+        elif isinstance(value, dict):
+            return "object"
+        elif isinstance(value, str):
+            import os
+            if (value.startswith("memory://") or 
+                value.startswith("file://") or 
+                (len(value) > 3 and (os.path.isabs(value) or "/" in value or "\\" in value or "." in value))):
+                if os.path.exists(value) or any(value.lower().endswith(ext) for ext in [".pcap", ".pcapng", ".json", ".txt", ".csv", ".xml", ".pdf"]):
+                    return "file"
+            try:
+                import json
+                if value.strip().startswith(("{", "[")):
+                    json.loads(value)
+                    return "json"
+            except Exception:
+                pass
+            return "string"
+        return "json"
 
     # ── Artifact helpers ─────────────────────────────────────────────────────
 
@@ -316,6 +397,7 @@ class StepExecutor(ABC):
         pass
 
     def execute(self, step: Dict[str, Any], ctx: WorkflowExecutionContext) -> Dict[str, Any]:
+        self.ctx = ctx
         ctx.current_executor = self.__class__.__name__
         step_title = step.get("title") or "Step"
         ctx.current_action = f"Executing step: {step_title}"
@@ -404,6 +486,44 @@ class StepExecutor(ABC):
                 safe_err = str(err).encode('ascii', errors='replace').decode('ascii')
                 print(f"Failed to log timeline event: {safe_err}")
 
+    def setVariable(self, name: str, value: Any, type: Optional[str] = None) -> None:
+        if hasattr(self, "ctx") and self.ctx:
+            self.ctx.set_variable(name, value, type)
+
+    def set_variable(self, name: str, value: Any, type: Optional[str] = None) -> None:
+        if hasattr(self, "ctx") and self.ctx:
+            self.ctx.set_variable(name, value, type)
+
+    def getVariable(self, name: str) -> Any:
+        if hasattr(self, "ctx") and self.ctx:
+            return self.ctx.get_variable(name)
+        return None
+
+    def get_variable(self, name: str) -> Any:
+        if hasattr(self, "ctx") and self.ctx:
+            return self.ctx.get_variable(name)
+        return None
+
+    def hasVariable(self, name: str) -> bool:
+        if hasattr(self, "ctx") and self.ctx:
+            return self.ctx.has_variable(name)
+        return False
+
+    def has_variable(self, name: str) -> bool:
+        if hasattr(self, "ctx") and self.ctx:
+            return self.ctx.has_variable(name)
+        return False
+
+    def listVariables(self) -> List[Dict[str, Any]]:
+        if hasattr(self, "ctx") and self.ctx:
+            return self.ctx.list_variables()
+        return []
+
+    def list_variables(self) -> List[Dict[str, Any]]:
+        if hasattr(self, "ctx") and self.ctx:
+            return self.ctx.list_variables()
+        return []
+
 
 # ---------------------------------------------------------------------------
 # ManualExecutor
@@ -461,6 +581,7 @@ class NmapExecutor(StepExecutor):
         )
 
     def _execute_internal(self, step: Dict[str, Any], ctx: WorkflowExecutionContext) -> Dict[str, Any]:
+        self.ctx = ctx
         step_id = step.get("stepId") or step.get("id") or "nmap-step"
 
         # 1. Resolve Target — step.config → context variable → description IP → fallback
@@ -519,12 +640,15 @@ class NmapExecutor(StepExecutor):
         ctx.add_artifact(artifact)
 
         # Write variables for subsequent executors
-        ctx.set_variable("target", target)
-        ctx.set_variable("scan_results", scan_result)
-        ctx.set_variable("last_scan_target", target)
-        ctx.set_variable("last_scan_ports", ports)
-        ctx.set_variable("open_ports", open_ports)
-        ctx.set_variable("services", services)
+        ctx.setVariable("host", target, "string")
+        ctx.setVariable("open_ports", open_ports, "array")
+        ctx.setVariable("services", services, "array")
+        ctx.setVariable("scan_results", scan_result, "json")
+
+        # Legacy compatibility variables
+        ctx.setVariable("target", target, "string")
+        ctx.setVariable("last_scan_target", target, "string")
+        ctx.setVariable("last_scan_ports", ports, "array")
 
         # Structured step output
         output = {
@@ -557,11 +681,18 @@ class PacketCaptureExecutor(StepExecutor):
         title = step.get("title", "").lower()
         desc = step.get("description", "").lower()
         step_type = step.get("stepType", "")
+        
+        # Exclude PCAP analysis patterns so they route to PCAPAnalysisExecutor
+        is_analysis = "analyze pcap" in title or "pcap analysis" in title or "analyze pcap" in desc or "pcap analysis" in desc
+        if is_analysis:
+            return False
+
         return step_type == "AUTOMATED" and (
             "capture" in title or "capture" in desc or "network capture" in title or "pcap" in title
         )
 
     def _execute_internal(self, step: Dict[str, Any], ctx: WorkflowExecutionContext) -> Dict[str, Any]:
+        self.ctx = ctx
         import os
         from services import capture_service
 
@@ -653,12 +784,15 @@ class PacketCaptureExecutor(StepExecutor):
         ctx.add_artifact(artifact)
 
         # Write variables for subsequent executors
-        ctx.set_variable("capture_id", capture_id)
-        ctx.set_variable("capture_interface", interface)
-        ctx.set_variable("capture_duration", duration)
-        ctx.set_variable("capture_packet_count", packet_count)
-        ctx.set_variable("capture_file", capture_file)
-        ctx.set_variable("capture_status", "completed")
+        ctx.setVariable("capture_file", capture_file, "file")
+        ctx.setVariable("packet_count", packet_count, "number")
+        ctx.setVariable("capture_duration", duration, "number")
+        ctx.setVariable("capture_interface", interface, "string")
+
+        # Legacy compatibility variables
+        ctx.setVariable("capture_id", capture_id, "string")
+        ctx.setVariable("capture_packet_count", packet_count, "number")
+        ctx.setVariable("capture_status", "completed", "string")
 
         # Structured step output
         output = {
@@ -677,6 +811,319 @@ class PacketCaptureExecutor(StepExecutor):
             "duration": duration_ms,
             "summary": f"Packet capture completed on {interface}. {packet_count} packets captured.",
         }
+
+
+# ---------------------------------------------------------------------------
+# PCAPAnalysisExecutor
+# ---------------------------------------------------------------------------
+
+class PCAPAnalysisExecutor(StepExecutor):
+    identifier = "pcap_analysis"
+
+    def can_execute(self, step: Dict[str, Any]) -> bool:
+        title = step.get("title", "").lower()
+        desc = step.get("description", "").lower()
+        step_type = step.get("stepType", "")
+        executor_id = step.get("executor") or step.get("executorType")
+        if executor_id == "pcap_analysis":
+            return True
+        return step_type == "AUTOMATED" and (
+            "analyze pcap" in title or "pcap analysis" in title or
+            "analyze pcap" in desc or "pcap analysis" in desc
+        )
+
+    def _execute_internal(self, step: Dict[str, Any], ctx: WorkflowExecutionContext) -> Dict[str, Any]:
+        self.ctx = ctx
+        import os
+        from parsers import tshark_parser, packet_parser
+
+        step_id = step.get("stepId") or step.get("id") or "pcap-analysis-step"
+
+        # 1. Resolve Config
+        config = step.get("config") or {}
+
+        # Log the entire resolved step configuration immediately before validation
+        ExecutionLogger.log(ctx, "INFO", f"Resolved step configuration: {config}")
+
+        capture_file = (
+            config.get("capture_file")
+            or config.get("pcap_file")
+            or config.get("pcap_file_path")
+            or config.get("file_path")
+            or config.get("path")
+        )
+        if capture_file:
+            config["capture_file"] = capture_file
+
+        ExecutionLogger.log(ctx, "INFO", "Starting PCAP Analysis")
+
+        # 2. Variable resolution check
+        if not capture_file:
+            error_msg = "Missing 'capture_file' config parameter."
+            ExecutionLogger.log(ctx, "ERROR", error_msg)
+            return {"success": False, "error": error_msg}
+
+        if "${" in str(capture_file):
+            error_msg = f"Received unresolved variable placeholder in config: {capture_file}"
+            ExecutionLogger.log(ctx, "ERROR", error_msg)
+            return {"success": False, "error": error_msg}
+
+        # Handle file URI schema and clean backslashes for Windows
+        if isinstance(capture_file, str):
+            if capture_file.startswith("file:///"):
+                capture_file = capture_file[8:]
+            elif capture_file.startswith("file://"):
+                capture_file = capture_file[7:]
+            capture_file = os.path.abspath(capture_file.replace('/', '\\'))
+
+        # 3. Verify capture file exists
+        ExecutionLogger.log(ctx, "INFO", f"Verifying capture file existence: {capture_file}")
+        if not os.path.exists(capture_file):
+            error_msg = f"Capture file does not exist: {capture_file}"
+            ExecutionLogger.log(ctx, "ERROR", error_msg)
+            return {"success": False, "error": error_msg}
+
+        start_time = time.time()
+        self.create_timeline_event(ctx, "PCAP Analysis Started", f"Analyzing capture file: {os.path.basename(capture_file)}")
+
+        try:
+            # 4. Execute TShark to extract structured information
+            ExecutionLogger.log(ctx, "INFO", "Executing TShark to extract protocols...")
+            raw_protocols = tshark_parser.extract_protocol_lines(capture_file)
+            protocols_list = sorted(list(set(p.strip().upper() for p in raw_protocols if p.strip())))
+            ExecutionLogger.log(ctx, "INFO", f"Protocols found: {', '.join(protocols_list)}")
+
+            ExecutionLogger.log(ctx, "INFO", "Executing TShark to extract DNS queries...")
+            raw_dns = tshark_parser.extract_dns_query_lines(capture_file)
+            dns_set = set()
+            for line in raw_dns:
+                for part in line.replace('\t', ',').split(','):
+                    part = part.strip().lower()
+                    if part and part != "none":
+                        dns_set.add(part)
+            dns_queries_list = sorted(list(dns_set))
+            ExecutionLogger.log(ctx, "INFO", f"DNS queries found: {len(dns_queries_list)}")
+
+            ExecutionLogger.log(ctx, "INFO", "Executing TShark to extract HTTP hosts...")
+            raw_http = tshark_parser.extract_http_host_lines(capture_file)
+            http_set = set()
+            for line in raw_http:
+                for part in line.replace('\t', ',').split(','):
+                    part = part.strip().lower()
+                    if part and part != "none":
+                        http_set.add(part)
+            http_hosts_list = sorted(list(http_set))
+            ExecutionLogger.log(ctx, "INFO", f"HTTP hosts found: {len(http_hosts_list)}")
+
+            ExecutionLogger.log(ctx, "INFO", "Executing TShark to extract TLS sessions...")
+            raw_tls = tshark_parser.extract_tls_session_lines(capture_file)
+            tls_set = set()
+            for line in raw_tls:
+                for part in line.replace('\t', ',').split(','):
+                    part = part.strip().lower()
+                    if part and part != "none":
+                        tls_set.add(part)
+            tls_sessions_list = sorted(list(tls_set))
+            ExecutionLogger.log(ctx, "INFO", f"TLS sessions found: {len(tls_sessions_list)}")
+
+            ExecutionLogger.log(ctx, "INFO", "Executing TShark to parse conversations...")
+            conversation_map = {}
+            for line in tshark_parser.extract_conversation_lines(capture_file):
+                parsed = packet_parser.parse_conversation_line(line)
+                if not parsed:
+                    continue
+                src, dst, proto = parsed
+                key = (src, dst, proto.upper())
+                conversation_map[key] = conversation_map.get(key, 0) + 1
+
+            conversations_list = []
+            for (src, dst, proto), pkts in sorted(conversation_map.items(), key=lambda x: x[1], reverse=True):
+                conversations_list.append({
+                    "src": src,
+                    "dst": dst,
+                    "protocol": proto,
+                    "packets": pkts
+                })
+            ExecutionLogger.log(ctx, "INFO", f"Conversations parsed: {len(conversations_list)}")
+
+            # Format conversations as list of strings
+            conversations_str_list = [
+                f"{c['src']} -> {c['dst']} ({c['protocol']})"
+                for c in conversations_list
+            ]
+
+            # Extract endpoints
+            ExecutionLogger.log(ctx, "INFO", "Extracting unique network endpoints...")
+            endpoints_set = set()
+            for conv in conversations_list:
+                endpoints_set.add(conv["src"])
+                endpoints_set.add(conv["dst"])
+            endpoints_list = sorted(list(endpoints_set))
+            ExecutionLogger.log(ctx, "INFO", f"Endpoints identified: {len(endpoints_list)}")
+
+            # Calculate capture statistics and duration
+            file_size = os.path.getsize(capture_file)
+            total_packets = len(raw_protocols)
+
+            # Helper for getting capture duration
+            duration = 0.0
+            if total_packets > 1:
+                try:
+                    res_first = tshark_parser.run_tshark("-r", capture_file, "-T", "fields", "-e", "frame.time_epoch", "-c", "1")
+                    res_last = tshark_parser.run_tshark("-r", capture_file, "-T", "fields", "-e", "frame.time_epoch", "-Y", f"frame.number == {total_packets}")
+                    if res_first.returncode == 0 and res_last.returncode == 0:
+                        first_str = res_first.stdout.strip()
+                        last_str = res_last.stdout.strip()
+                        if first_str and last_str:
+                            duration = float(last_str) - float(first_str)
+                except Exception as ex:
+                    ExecutionLogger.log(ctx, "WARN", f"Failed to compute duration: {ex}")
+
+            statistics = {
+                "total_packets": total_packets,
+                "file_size_bytes": file_size,
+                "duration_seconds": round(duration, 3),
+                "protocols_count": len(protocols_list),
+                "dns_queries_count": len(dns_queries_list),
+                "http_hosts_count": len(http_hosts_list),
+                "tls_sessions_count": len(tls_sessions_list),
+                "conversations_count": len(conversations_list),
+                "endpoints_count": len(endpoints_list),
+            }
+            ExecutionLogger.log(ctx, "INFO", f"Compiled statistics: {statistics}")
+
+            analysis_summary = (
+                f"PCAP Analysis completed for {os.path.basename(capture_file)}. "
+                f"Analyzed {total_packets} packets over {round(duration, 2)}s. "
+                f"Found {len(protocols_list)} protocols ({', '.join(protocols_list[:5])}), "
+                f"{len(dns_queries_list)} DNS queries, {len(http_hosts_list)} HTTP hosts, "
+                f"{len(tls_sessions_list)} TLS sessions, and {len(conversations_list)} conversations."
+            )
+            ExecutionLogger.log(ctx, "INFO", f"Summary: {analysis_summary}")
+
+            # 5. Store variables in Workflow Variable Registry with metadata
+            ExecutionLogger.log(ctx, "INFO", "Publishing variables to Variable Registry...")
+            ctx.set_variable("protocols", protocols_list, "array")
+            ctx.set_variable("dns_queries", dns_queries_list, "array")
+            ctx.set_variable("http_hosts", http_hosts_list, "array")
+            ctx.set_variable("tls_sessions", tls_sessions_list, "array")
+            ctx.set_variable("conversations", conversations_str_list, "array")
+            ctx.set_variable("endpoints", endpoints_list, "array")
+            ctx.set_variable("statistics", statistics, "object")
+            ctx.set_variable("analysis_summary", analysis_summary, "string")
+
+            # 6. Create Markdown report artifact
+            ExecutionLogger.log(ctx, "INFO", "Creating PCAP Analysis artifact...")
+            artifact_dir = os.path.dirname(capture_file)
+            base_name = os.path.splitext(os.path.basename(capture_file))[0]
+            artifact_path = os.path.join(artifact_dir, f"analysis_{base_name}_{uuid.uuid4().hex[:8]}.md")
+
+            # Count protocols for markdown
+            from collections import Counter
+            proto_counts = dict(Counter(p.strip().upper() for p in raw_protocols if p.strip()))
+            proto_summary_md = ""
+            for proto, count in sorted(proto_counts.items(), key=lambda x: x[1], reverse=True):
+                proto_summary_md += f"- **{proto}**: {count} packets\n"
+
+            md_content = f"""# PCAP Analysis Report
+
+## Source Capture File
+- **Path**: `{capture_file}`
+- **Size**: `{file_size} bytes`
+- **Analyzed At**: `{datetime.utcnow().isoformat() + "Z"}`
+
+## Extracted Statistics
+- **Total Packets**: {total_packets}
+- **Duration**: {round(duration, 3)} seconds
+- **Unique Protocols**: {len(protocols_list)}
+- **DNS Queries**: {len(dns_queries_list)}
+- **HTTP Hosts**: {len(http_hosts_list)}
+- **TLS Sessions**: {len(tls_sessions_list)}
+- **Conversations**: {len(conversations_list)}
+- **Endpoints**: {len(endpoints_list)}
+
+## Protocol Summary
+{proto_summary_md if proto_summary_md else "*No protocols identified.*"}
+
+## DNS Summary
+{chr(10).join(f"- `{query}`" for query in dns_queries_list[:50]) if dns_queries_list else "*No DNS queries identified.*"}
+{f"*... and {len(dns_queries_list) - 50} more DNS queries.*" if len(dns_queries_list) > 50 else ""}
+
+## HTTP Summary
+{chr(10).join(f"- `{host}`" for host in http_hosts_list[:50]) if http_hosts_list else "*No HTTP hosts identified.*"}
+{f"*... and {len(http_hosts_list) - 50} more HTTP hosts.*" if len(http_hosts_list) > 50 else ""}
+
+## TLS Summary
+{chr(10).join(f"- `{session}`" for session in tls_sessions_list[:50]) if tls_sessions_list else "*No TLS sessions identified.*"}
+{f"*... and {len(tls_sessions_list) - 50} more TLS sessions.*" if len(tls_sessions_list) > 50 else ""}
+
+## Conversation Summary
+| Source | Destination | Protocol | Packets |
+|---|---|---|---|
+"""
+            for conv in conversations_list[:50]:
+                md_content += f"| {conv['src']} | {conv['dst']} | {conv['protocol']} | {conv['packets']} |\n"
+            if len(conversations_list) > 50:
+                md_content += f"| *... and {len(conversations_list) - 50} more* | | | |\n"
+            if not conversations_list:
+                md_content += "| *No conversations identified* | | | |\n"
+
+            # Write file to disk
+            with open(artifact_path, "w", encoding="utf-8") as f:
+                f.write(md_content)
+
+            artifact = WorkflowArtifact(
+                name=f"PCAP Analysis - {os.path.basename(capture_file)}",
+                type="markdown",
+                mimeType="text/markdown",
+                producerExecutor=self.__class__.__name__,
+                stepId=step_id,
+                location=artifact_path,
+                metadata={
+                    "capture_file": capture_file,
+                    "statistics": statistics,
+                    "protocols_count": len(protocols_list),
+                    "dns_queries_count": len(dns_queries_list),
+                    "http_hosts_count": len(http_hosts_list),
+                    "tls_sessions_count": len(tls_sessions_list),
+                    "conversations_count": len(conversations_list),
+                },
+                data=md_content
+            )
+            ctx.add_artifact(artifact)
+            ExecutionLogger.log(ctx, "INFO", f"Analysis artifact created: {artifact_path}")
+
+            # 7. Structured step output
+            output = {
+                "capture_file": capture_file,
+                "protocols": protocols_list,
+                "dns_queries": dns_queries_list,
+                "http_hosts": http_hosts_list,
+                "tls_sessions": tls_sessions_list,
+                "conversations": conversations_list,
+                "endpoints": endpoints_list,
+                "statistics": statistics,
+                "artifactId": artifact.artifactId,
+                "analyzedAt": datetime.utcnow().isoformat() + "Z",
+            }
+            ctx.set_step_output(step_id, output)
+
+            duration_ms = (time.time() - start_time) * 1000.0
+            self.create_timeline_event(ctx, "PCAP Analysis Completed", f"Analysis completed successfully in {round(duration_ms / 1000.0, 2)}s.")
+            ExecutionLogger.log(ctx, "INFO", "PCAP Analysis step completed successfully")
+
+            return {
+                "success": True,
+                "output": output,
+                "duration": duration_ms,
+                "summary": analysis_summary,
+            }
+
+        except Exception as e:
+            error_msg = f"PCAP Analysis failed: {e}"
+            ExecutionLogger.log(ctx, "ERROR", error_msg)
+            self.create_timeline_event(ctx, "PCAP Analysis Failed", error_msg)
+            return {"success": False, "error": error_msg}
 
 
 # ---------------------------------------------------------------------------
@@ -711,7 +1158,51 @@ class StepExecutorRegistry:
 _REGISTRY = StepExecutorRegistry()
 _REGISTRY.register(ManualExecutor())
 _REGISTRY.register(NmapExecutor())
+_REGISTRY.register(PCAPAnalysisExecutor())
 _REGISTRY.register(PacketCaptureExecutor())
+
+
+# ---------------------------------------------------------------------------
+# StepRunner
+# ---------------------------------------------------------------------------
+
+# Variable Resolver
+# ---------------------------------------------------------------------------
+
+def resolve_variables(val: Any, ctx: WorkflowExecutionContext) -> Any:
+    """
+    Recursively resolve variable bindings of format ${variable_name} inside val.
+    - If val equals ${variable_name} exactly, replaces with the raw stored value (preserving type).
+    - If val contains ${variable_name} as a substring, replaces with stringified stored value.
+    - Dicts and Lists are traversed recursively.
+    """
+    if isinstance(val, dict):
+        return {k: resolve_variables(v, ctx) for k, v in val.items()}
+    elif isinstance(val, list):
+        return [resolve_variables(item, ctx) for item in val]
+    elif isinstance(val, str):
+        # 1. Exact match: ${variable_name} -> raw value (maintaining type)
+        match = re.fullmatch(r"\$\{([^}]+)\}", val)
+        if match:
+            var_name = match.group(1)
+            if ctx.has_variable(var_name):
+                return ctx.get_variable(var_name)
+            return val
+        
+        # 2. Substring interpolation: ...${variable_name}... -> substitute stringified
+        def replace_match(m):
+            var_name = m.group(1)
+            if ctx.has_variable(var_name):
+                resolved = ctx.get_variable(var_name)
+                if isinstance(resolved, (dict, list)):
+                    import json
+                    return json.dumps(resolved)
+                return str(resolved)
+            return m.group(0)
+            
+        return re.sub(r"\$\{([^}]+)\}", replace_match, val)
+        
+    return val
 
 
 # ---------------------------------------------------------------------------
@@ -727,14 +1218,28 @@ class StepRunner:
         step_type = step.get("stepType") or "MANUAL"
 
         ctx.current_step = step_title
+        ctx.current_step_number = step_number
         update_execution_record(ctx)
 
         ExecutionLogger.log(ctx, "INFO",
             f"[{step_number}/{ctx.total_steps}] Starting step: {step_title} (type={step_type})")
 
-        executor = _REGISTRY.resolve(step)
+        import copy
+        resolved_step = copy.deepcopy(step)
+        resolved_step = resolve_variables(resolved_step, ctx)
+
+        # Trace executor selection for each workflow step. Log every executor's can_execute() result.
+        ExecutionLogger.log(ctx, "INFO", f"[TRACE] Resolving executor for step '{step_title}'")
+        for exec_obj in _REGISTRY._executors:
+            try:
+                can_exec = exec_obj.can_execute(resolved_step)
+                ExecutionLogger.log(ctx, "INFO", f"[TRACE] Executor '{exec_obj.__class__.__name__}' (identifier={exec_obj.identifier}) can_execute: {can_exec}")
+            except Exception as e:
+                ExecutionLogger.log(ctx, "INFO", f"[TRACE] Executor '{exec_obj.__class__.__name__}' (identifier={exec_obj.identifier}) can_execute error: {e}")
+
+        executor = _REGISTRY.resolve(resolved_step)
         if not executor:
-            error_msg = f"Unknown or missing executor: '{step.get('executor', 'unknown')}'"
+            error_msg = f"Unknown or missing executor: '{resolved_step.get('executor', 'unknown')}'"
             ExecutionLogger.log(ctx, "WARN", error_msg)
             
             # create timeline event manually
@@ -777,7 +1282,7 @@ class StepRunner:
             }
             return step_result
 
-        result = executor.execute(step, ctx)
+        result = executor.execute(resolved_step, ctx)
 
         # Also store output in stepOutputs if executor didn't do it already
         if "output" in result and step_id not in ctx.stepOutputs:

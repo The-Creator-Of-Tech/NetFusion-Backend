@@ -133,7 +133,7 @@ _h("STEP 0: Create a test playbook")
 
 ts = datetime.utcnow().isoformat() + "Z"
 create_body = {
-    "name": "Tracer Playbook",
+    "name": f"Tracer Playbook - {uuid.uuid4()}",
     "description": "Lifecycle tracer test playbook",
     "severity": "HIGH",
     "status": "ACTIVE",

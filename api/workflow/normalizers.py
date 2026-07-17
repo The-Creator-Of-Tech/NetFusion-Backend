@@ -151,6 +151,8 @@ def normalize_playbook(raw: Dict[str, Any]) -> Dict[str, Any]:
             if step_type == "AUTOMATED":
                 if "nmap" in title_lower or "nmap" in desc_lower or "scan" in title_lower or "scan" in desc_lower:
                     executor = "nmap"
+                elif "analyze pcap" in title_lower or "pcap analysis" in title_lower or "analyze pcap" in desc_lower or "pcap analysis" in desc_lower:
+                    executor = "pcap_analysis"
                 elif "capture" in title_lower or "capture" in desc_lower or "network capture" in title_lower or "pcap" in title_lower:
                     executor = "packet_capture"
                 else:

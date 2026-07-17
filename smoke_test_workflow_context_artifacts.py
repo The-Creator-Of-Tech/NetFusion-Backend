@@ -411,7 +411,7 @@ check("update_execution_record called",  saved is not None, f"keys: {list(_fake_
 if saved:
     meta = saved.get("metadata", {})
     check("metadata.variables present",        "variables" in meta)
-    check("metadata.variables.target correct", meta["variables"].get("target") == "1.2.3.4")
+    check("metadata.variables.target correct", isinstance(meta["variables"].get("target"), dict) and meta["variables"]["target"].get("value") == "1.2.3.4")
     check("metadata.artifacts is list",        isinstance(meta.get("artifacts"), list))
     check("metadata.artifacts length 1",       len(meta.get("artifacts", [])) == 1)
     check("metadata.artifactsCount=1",         meta.get("artifactsCount") == 1)
