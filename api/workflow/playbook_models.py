@@ -45,11 +45,13 @@ class PlaybookStepRequest(BaseModel):
     title             : str
     description       : str           = ""
     stepType          : str           # StepType enum value
+    executor          : Optional[str] = None
     expectedOutcome   : str           = ""
     relatedTechniques : Optional[List[str]] = Field(default_factory=list)
     relatedCVEs       : Optional[List[str]] = Field(default_factory=list)
     relatedIOCs       : Optional[List[str]] = Field(default_factory=list)
     createdAt         : str
+    config            : Optional[Dict[str, Any]] = None
 
     class Config:
         frozen = True
@@ -79,11 +81,13 @@ class PlaybookStepResponse(BaseModel):
     title             : str
     description       : str
     stepType          : str           # StepType
+    executor          : Optional[str] = None
     expectedOutcome   : str
     relatedTechniques : List[str]
     relatedCVEs       : List[str]
     relatedIOCs       : List[str]
     createdAt         : str
+    config            : Optional[Dict[str, Any]] = None
 
     class Config:
         frozen = True

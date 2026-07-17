@@ -49,10 +49,12 @@ def _to_response(raw: Dict[str, Any]) -> PlaybookResponse:
             stepId=s["stepId"], stepKey=s["stepKey"],
             stepNumber=s["stepNumber"], title=s["title"],
             description=s["description"], stepType=s["stepType"],
+            executor=s.get("executor"),
             expectedOutcome=s["expectedOutcome"],
             relatedTechniques=s["relatedTechniques"],
             relatedCVEs=s["relatedCVEs"], relatedIOCs=s["relatedIOCs"],
             createdAt=s["createdAt"],
+            config=s.get("config"),
         )
         for s in c["steps"]
     ]
@@ -169,11 +171,14 @@ def _build_store_dict(pb_obj, req_dict: Dict) -> Dict:
             "stepId": s.stepId, "stepKey": s.stepKey,
             "stepNumber": s.stepNumber, "title": s.title,
             "description": s.description, "stepType": s.stepType.value,
+            "executor": s.executor,
             "expectedOutcome": s.expectedOutcome,
             "relatedTechniques": list(s.relatedTechniques),
             "relatedCVEs": list(s.relatedCVEs),
             "relatedIOCs": list(s.relatedIOCs),
             "createdAt": s.createdAt,
+            "config": s.config,
+            "metadata": {"config": s.config} if s.config else {},
         })
     return {
         "playbookId":          pb_obj.playbookId,
@@ -323,10 +328,12 @@ def create_playbook(request: CreatePlaybookRequest = Body(...)) -> APIResponse:
                 request.name, step_number=s.stepNumber, title=s.title,
                 step_type=PlaybookStepTypeEnum(s.stepType.strip().upper()),
                 created_at=s.createdAt, description=s.description or "",
+                executor=s.executor,
                 expected_outcome=s.expectedOutcome or "",
                 related_techniques=list(s.relatedTechniques or []),
                 related_cves=list(s.relatedCVEs or []),
                 related_iocs=list(s.relatedIOCs or []),
+                config=s.config,
             ))
 
         pb = build_playbook(
@@ -387,10 +394,12 @@ def update_playbook(playbookId: str, request: UpdatePlaybookRequest = Body(...))
                     name, step_number=s_raw.stepNumber, title=s_raw.title,
                     step_type=PlaybookStepTypeEnum(s_raw.stepType.strip().upper()),
                     created_at=s_raw.createdAt, description=s_raw.description or "",
+                    executor=s_raw.executor,
                     expected_outcome=s_raw.expectedOutcome or "",
                     related_techniques=list(s_raw.relatedTechniques or []),
                     related_cves=list(s_raw.relatedCVEs or []),
                     related_iocs=list(s_raw.relatedIOCs or []),
+                    config=s_raw.config,
                 ))
             else:
                 steps_built.append(build_playbook_step(
@@ -399,10 +408,12 @@ def update_playbook(playbookId: str, request: UpdatePlaybookRequest = Body(...))
                     step_type=PlaybookStepTypeEnum(s_raw["stepType"].strip().upper()),
                     created_at=s_raw["createdAt"],
                     description=s_raw.get("description", ""),
+                    executor=s_raw.get("executor"),
                     expected_outcome=s_raw.get("expectedOutcome", ""),
                     related_techniques=list(s_raw.get("relatedTechniques", [])),
                     related_cves=list(s_raw.get("relatedCVEs", [])),
                     related_iocs=list(s_raw.get("relatedIOCs", [])),
+                    config=s_raw.get("config"),
                 ))
 
         pb = build_playbook(
@@ -481,10 +492,12 @@ def append_step(playbookId: str, request: PlaybookStepRequest = Body(...)) -> AP
             pb_obj.playbookId, step_number=request.stepNumber, title=request.title,
             step_type=PlaybookStepTypeEnum(request.stepType.strip().upper()),
             created_at=request.createdAt, description=request.description or "",
+            executor=request.executor,
             expected_outcome=request.expectedOutcome or "",
             related_techniques=list(request.relatedTechniques or []),
             related_cves=list(request.relatedCVEs or []),
             related_iocs=list(request.relatedIOCs or []),
+            config=request.config,
         )
         new_pb = add_playbook_step(pb_obj, new_step)
         updated = _build_store_dict(new_pb, c)
@@ -517,10 +530,12 @@ def update_step(playbookId: str, stepId: str,
         new_pb = svc_update(pb_obj, stepId,
             title=request.title, description=request.description or "",
             step_type=PlaybookStepTypeEnum(request.stepType.strip().upper()),
+            executor=request.executor,
             expected_outcome=request.expectedOutcome or "",
             related_techniques=list(request.relatedTechniques or []),
             related_cves=list(request.relatedCVEs or []),
             related_iocs=list(request.relatedIOCs or []),
+            config=request.config,
         )
         updated = _build_store_dict(new_pb, c)
         old_id = c["playbookId"]
@@ -669,11 +684,13 @@ def _dict_to_pb_obj(d: Dict):
             stepId=s["stepId"], stepKey=s["stepKey"],
             stepNumber=s["stepNumber"], title=s["title"],
             description=s["description"], stepType=st,
+            executor=s.get("executor"),
             expectedOutcome=s["expectedOutcome"],
             relatedTechniques=tuple(s["relatedTechniques"]),
             relatedCVEs=tuple(s["relatedCVEs"]),
             relatedIOCs=tuple(s["relatedIOCs"]),
             createdAt=s["createdAt"],
+            config=s.get("config"),
         ))
     try:   sev  = PlaybookSeverityEnum(n["severity"].strip().upper())
     except ValueError: sev = PlaybookSeverityEnum("MEDIUM")
@@ -710,10 +727,12 @@ def bulk_create(request: BulkCreatePlaybooksRequest = Body(...)) -> APIResponse:
                         item.name, step_number=s.stepNumber, title=s.title,
                         step_type=PlaybookStepTypeEnum(s.stepType.strip().upper()),
                         created_at=s.createdAt, description=s.description or "",
+                        executor=s.executor,
                         expected_outcome=s.expectedOutcome or "",
                         related_techniques=list(s.relatedTechniques or []),
                         related_cves=list(s.relatedCVEs or []),
                         related_iocs=list(s.relatedIOCs or []),
+                        config=s.config,
                     ) for s in (item.steps or [])
                 ]
                 pb = build_playbook(
@@ -773,10 +792,12 @@ def bulk_update(request: BulkUpdatePlaybooksRequest = Body(...)) -> APIResponse:
                         name, step_number=s.stepNumber, title=s.title,
                         step_type=PlaybookStepTypeEnum(s.stepType.strip().upper()),
                         created_at=s.createdAt, description=s.description or "",
+                        executor=s.executor,
                         expected_outcome=s.expectedOutcome or "",
                         related_techniques=list(s.relatedTechniques or []),
                         related_cves=list(s.relatedCVEs or []),
                         related_iocs=list(s.relatedIOCs or []),
+                        config=s.config,
                     ) for s in u.steps]
                 else:
                     steps_built = [build_playbook_step(
@@ -785,10 +806,12 @@ def bulk_update(request: BulkUpdatePlaybooksRequest = Body(...)) -> APIResponse:
                         step_type=PlaybookStepTypeEnum(s["stepType"].strip().upper()),
                         created_at=s["createdAt"],
                         description=s.get("description",""),
+                        executor=s.get("executor"),
                         expected_outcome=s.get("expectedOutcome",""),
                         related_techniques=list(s.get("relatedTechniques",[])),
                         related_cves=list(s.get("relatedCVEs",[])),
                         related_iocs=list(s.get("relatedIOCs",[])),
+                        config=s.get("config"),
                     ) for s in existing["steps"]]
 
                 pb = build_playbook(

@@ -19,10 +19,15 @@ export class PlaybookRepository extends BaseRepository<Playbook, Prisma.Playbook
         if (steps && Array.isArray(steps)) {
           for (const step of steps) {
             const stepId = step.id || step.stepId || undefined;
-            const { id: dummyId, stepId: dummyStepId, ...stepData } = step;
+            const { id: dummyId, stepId: dummyStepId, config, metadata: rawMetadata, ...stepData } = step;
+            const metadata = typeof rawMetadata === 'object' && rawMetadata !== null ? { ...rawMetadata } : {};
+            if (config) {
+              metadata.config = config;
+            }
             await transaction.playbookStep.create({
               data: {
                 ...stepData,
+                metadata: metadata,
                 id: stepId,
                 playbookId: createdPlaybook.id,
                 createdBy: createdPlaybook.createdBy || 'test-user',
@@ -56,10 +61,15 @@ export class PlaybookRepository extends BaseRepository<Playbook, Prisma.Playbook
           if (Array.isArray(steps)) {
             for (const step of steps) {
               const stepId = step.id || step.stepId || undefined;
-              const { id: dummyId, stepId: dummyStepId, ...stepData } = step;
+              const { id: dummyId, stepId: dummyStepId, config, metadata: rawMetadata, ...stepData } = step;
+              const metadata = typeof rawMetadata === 'object' && rawMetadata !== null ? { ...rawMetadata } : {};
+              if (config) {
+                metadata.config = config;
+              }
               await transaction.playbookStep.create({
                 data: {
                   ...stepData,
+                  metadata: metadata,
                   id: stepId,
                   playbookId: id,
                   createdBy: updatedPlaybook.updatedBy || 'test-user',

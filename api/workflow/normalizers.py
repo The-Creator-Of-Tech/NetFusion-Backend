@@ -138,18 +138,48 @@ def normalize_playbook(raw: Dict[str, Any]) -> Dict[str, Any]:
         step_type = (s.get("stepType") or "MANUAL").upper()
         if step_type == "INVESTIGATION":          # legacy wrong default fix
             step_type = "MANUAL"
+        title = s.get("title") or ""
+        desc = s.get("description") or ""
+
+        executor = s.get("executor")
+        if executor is None:
+            executor = s.get("executorType")
+        
+        if not executor:
+            title_lower = title.lower()
+            desc_lower = desc.lower()
+            if step_type == "AUTOMATED":
+                if "nmap" in title_lower or "nmap" in desc_lower or "scan" in title_lower or "scan" in desc_lower:
+                    executor = "nmap"
+                elif "capture" in title_lower or "capture" in desc_lower or "network capture" in title_lower or "pcap" in title_lower:
+                    executor = "packet_capture"
+                else:
+                    executor = "manual"
+            else:
+                executor = "manual"
+
+        step_meta = s.get("metadata") or {}
+        if isinstance(step_meta, str):
+            try:
+                step_meta = json.loads(step_meta)
+            except Exception:
+                step_meta = {}
+        config = s.get("config") or (step_meta.get("config") if isinstance(step_meta, dict) else None) or {}
+
         steps.append({
             "stepId":            s.get("stepId") or s.get("id") or "",
             "stepKey":           s.get("stepKey") or s.get("stepId") or "",
             "stepNumber":        s.get("stepNumber") or 1,
-            "title":             s.get("title") or "",
-            "description":       s.get("description") or "",
+            "title":             title,
+            "description":       desc,
             "stepType":          step_type,
+            "executor":          executor,
             "expectedOutcome":   s.get("expectedOutcome") or "",
             "relatedTechniques": _to_list(s.get("relatedTechniques")),
             "relatedCVEs":       _to_list(s.get("relatedCVEs")),
             "relatedIOCs":       _to_list(s.get("relatedIOCs")),
             "createdAt":         _fmt_dt(s.get("createdAt")) or "",
+            "config":            config,
         })
 
     return {

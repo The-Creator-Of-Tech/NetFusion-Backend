@@ -141,11 +141,13 @@ class PlaybookStep(BaseModel):
     title             : str
     description       : str
     stepType          : PlaybookStepTypeEnum
+    executor          : Optional[str] = None
     expectedOutcome   : str
     relatedTechniques : Tuple[str, ...]
     relatedCVEs       : Tuple[str, ...]
     relatedIOCs       : Tuple[str, ...]
     createdAt         : str
+    config            : Optional[Dict[str, Any]] = None
 
     class Config:
         frozen = True
@@ -530,11 +532,13 @@ def build_playbook_step(
     step_type          : PlaybookStepTypeEnum,
     created_at         : str,
     description        : str                = "",
+    executor           : Optional[str]      = None,
     expected_outcome   : str                = "",
     related_techniques : Optional[List[str]] = None,
     related_cves       : Optional[List[str]] = None,
     related_iocs       : Optional[List[str]] = None,
     validate           : bool               = True,
+    config             : Optional[Dict[str, Any]] = None,
 ) -> PlaybookStep:
     """
     Build an immutable PlaybookStep.
@@ -580,11 +584,13 @@ def build_playbook_step(
         title             = title.strip(),
         description       = description,
         stepType          = step_type,
+        executor          = executor,
         expectedOutcome   = expected_outcome,
         relatedTechniques = _norm_upper_strings(related_techniques),
         relatedCVEs       = _norm_upper_strings(related_cves),
         relatedIOCs       = _norm_strings(related_iocs),
         createdAt         = created_at,
+        config            = config,
     )
 
 
@@ -1351,10 +1357,12 @@ def update_playbook_step(
     title           : Optional[str]               = None,
     description     : Optional[str]               = None,
     step_type       : Optional[PlaybookStepTypeEnum] = None,
+    executor        : Optional[str]               = None,
     expected_outcome: Optional[str]               = None,
     related_techniques: Optional[List[str]]       = None,
     related_cves    : Optional[List[str]]         = None,
     related_iocs    : Optional[List[str]]         = None,
+    config          : Optional[Dict[str, Any]]    = None,
 ) -> Playbook:
     """
     Return a new Playbook where the step matching *step_id* has updated fields.
@@ -1383,11 +1391,13 @@ def update_playbook_step(
             title             = title.strip() if title is not None else s.title,
             description       = description   if description is not None else s.description,
             stepType          = step_type     if step_type  is not None else s.stepType,
+            executor          = executor      if executor   is not None else s.executor,
             expectedOutcome   = expected_outcome if expected_outcome is not None else s.expectedOutcome,
             relatedTechniques = _norm_upper_strings(related_techniques) if related_techniques is not None else s.relatedTechniques,
             relatedCVEs       = _norm_upper_strings(related_cves)       if related_cves       is not None else s.relatedCVEs,
             relatedIOCs       = _norm_strings(related_iocs)             if related_iocs       is not None else s.relatedIOCs,
             createdAt         = s.createdAt,
+            config            = config                                  if config             is not None else s.config,
         )
         new_steps.append(updated_step)
         _log.info(

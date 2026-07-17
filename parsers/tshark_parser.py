@@ -81,9 +81,27 @@ def list_interfaces() -> List[dict]:
             continue
 
         idx, name = line.split(".", 1)
+        name_val = name.strip()
+
+        if "(" in name_val and name_val.endswith(")"):
+            value, label_part = name_val.split("(", 1)
+            value = value.strip()
+            label = label_part[:-1].strip()
+        else:
+            value = name_val
+            label = name_val
+
+        # Standardize labels for Wi-Fi, Ethernet, Loopback
+        if "loopback" in label.lower() or "loopback" in value.lower():
+            label = "Loopback"
+        elif "wi-fi" in label.lower() or "wifi" in label.lower():
+            label = "Wi-Fi"
+        elif "ethernet" in label.lower():
+            label = "Ethernet"
+
         interfaces.append({
-            "id": idx.strip(),
-            "name": name.strip(),
+            "label": label,
+            "value": value,
         })
 
     return interfaces

@@ -309,6 +309,7 @@ class StepExecutor(ABC):
     - Creating timeline events
     - Returning structured step outputs
     """
+    identifier: str = ""
 
     @abstractmethod
     def can_execute(self, step: Dict[str, Any]) -> bool:
@@ -409,6 +410,8 @@ class StepExecutor(ABC):
 # ---------------------------------------------------------------------------
 
 class ManualExecutor(StepExecutor):
+    identifier = "manual"
+
     def can_execute(self, step: Dict[str, Any]) -> bool:
         return step.get("stepType") == "MANUAL"
 
@@ -447,6 +450,8 @@ class ManualExecutor(StepExecutor):
 # ---------------------------------------------------------------------------
 
 class NmapExecutor(StepExecutor):
+    identifier = "nmap"
+
     def can_execute(self, step: Dict[str, Any]) -> bool:
         title = step.get("title", "").lower()
         desc = step.get("description", "").lower()
@@ -542,26 +547,171 @@ class NmapExecutor(StepExecutor):
 
 
 # ---------------------------------------------------------------------------
+# PacketCaptureExecutor
+# ---------------------------------------------------------------------------
+
+class PacketCaptureExecutor(StepExecutor):
+    identifier = "packet_capture"
+
+    def can_execute(self, step: Dict[str, Any]) -> bool:
+        title = step.get("title", "").lower()
+        desc = step.get("description", "").lower()
+        step_type = step.get("stepType", "")
+        return step_type == "AUTOMATED" and (
+            "capture" in title or "capture" in desc or "network capture" in title or "pcap" in title
+        )
+
+    def _execute_internal(self, step: Dict[str, Any], ctx: WorkflowExecutionContext) -> Dict[str, Any]:
+        import os
+        from services import capture_service
+
+        step_id = step.get("stepId") or step.get("id") or "capture-step"
+
+        # 1. Resolve Config
+        config = step.get("config") or {}
+        interface = config.get("interface") or "Ethernet"
+        try:
+            duration = int(config.get("duration") or 10)
+        except (ValueError, TypeError):
+            duration = 10
+
+        capture_filter = config.get("filter") or config.get("captureFilter") or ""
+        
+        ExecutionLogger.log(ctx, "INFO", "Starting Packet Capture")
+        ExecutionLogger.log(ctx, "INFO", f"Interface: {interface}")
+        ExecutionLogger.log(ctx, "INFO", f"Duration: {duration}s")
+        if capture_filter:
+            ExecutionLogger.log(ctx, "INFO", f"Filter: {capture_filter}")
+
+        ctx.current_action = f"Starting capture on {interface} for {duration}s"
+        update_execution_record(ctx)
+
+        start_time = time.time()
+        
+        # Start capture
+        self.create_timeline_event(ctx, "Capture Started", f"Starting capture on interface {interface}")
+        start_result = capture_service.start_capture(interface)
+        if "error" in start_result:
+            return {"success": False, "error": start_result["error"]}
+
+        capture_id = str(uuid.uuid4())
+        
+        self.create_timeline_event(ctx, "Capture Running", f"Capture is actively running for {duration} seconds.")
+        ctx.current_action = f"Capture running for {duration}s"
+        update_execution_record(ctx)
+
+        # Sleep for duration
+        time.sleep(duration)
+
+        # Stop capture
+        ctx.current_action = "Stopping capture"
+        update_execution_record(ctx)
+        
+        stop_result = capture_service.stop_capture()
+        if "error" in stop_result:
+            self.create_timeline_event(ctx, "Capture Failed", f"Failed to stop capture: {stop_result['error']}")
+            return {"success": False, "error": stop_result["error"]}
+
+        capture_file = stop_result.get("file")
+
+        # Analyze capture
+        ctx.current_action = "Analyzing PCAP"
+        update_execution_record(ctx)
+        
+        analyze_result = capture_service.analyze_latest_capture()
+        duration_ms = (time.time() - start_time) * 1000.0
+
+        if "error" in analyze_result:
+            self.create_timeline_event(ctx, "Capture Failed", f"Failed to analyze capture: {analyze_result['error']}")
+            return {"success": False, "error": analyze_result["error"]}
+
+        packet_count = analyze_result.get("total_packets", 0)
+        file_size = os.path.getsize(capture_file) if capture_file and os.path.exists(capture_file) else 0
+
+        self.create_timeline_event(ctx, "Capture Completed", f"Capture completed. Captured {packet_count} packets.")
+
+        ExecutionLogger.log(ctx, "INFO", f"Capture finished. PCAP saved to {capture_file}.")
+        ExecutionLogger.log(ctx, "INFO", f"Total packets: {packet_count}")
+
+        # Build typed artifact
+        artifact = WorkflowArtifact(
+            name=f"PCAP Capture - {interface}",
+            type="pcap",
+            mimeType="application/vnd.tcpdump.pcap",
+            producerExecutor=self.__class__.__name__,
+            stepId=step_id,
+            location=capture_file,
+            metadata={
+                "interface": interface,
+                "duration": duration,
+                "packetCount": packet_count,
+                "captureFilter": capture_filter,
+                "fileSize": file_size,
+                "location": capture_file,
+            },
+        )
+        ctx.add_artifact(artifact)
+
+        # Write variables for subsequent executors
+        ctx.set_variable("capture_id", capture_id)
+        ctx.set_variable("capture_interface", interface)
+        ctx.set_variable("capture_duration", duration)
+        ctx.set_variable("capture_packet_count", packet_count)
+        ctx.set_variable("capture_file", capture_file)
+        ctx.set_variable("capture_status", "completed")
+
+        # Structured step output
+        output = {
+            "interface": interface,
+            "duration": duration,
+            "packetCount": packet_count,
+            "captureFile": capture_file,
+            "artifactId": artifact.artifactId,
+            "capturedAt": datetime.utcnow().isoformat() + "Z",
+        }
+        ctx.set_step_output(step_id, output)
+
+        return {
+            "success": True,
+            "output": output,
+            "duration": duration_ms,
+            "summary": f"Packet capture completed on {interface}. {packet_count} packets captured.",
+        }
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
 class StepExecutorRegistry:
     def __init__(self):
+        self._executors_by_id: Dict[str, StepExecutor] = {}
         self._executors: List[StepExecutor] = []
 
     def register(self, executor: StepExecutor) -> None:
+        if executor.identifier:
+            self._executors_by_id[executor.identifier] = executor
         self._executors.append(executor)
 
-    def resolve(self, step: Dict[str, Any]) -> StepExecutor:
+    def resolve(self, step: Dict[str, Any]) -> Optional[StepExecutor]:
+        executor_id = step.get("executor") or step.get("executorType")
+        if executor_id:
+            if executor_id in self._executors_by_id:
+                return self._executors_by_id[executor_id]
+            else:
+                return None
+
+        # Legacy fallback
         for executor in self._executors:
             if executor.can_execute(step):
                 return executor
-        return ManualExecutor()
+        return None
 
 
 _REGISTRY = StepExecutorRegistry()
 _REGISTRY.register(ManualExecutor())
 _REGISTRY.register(NmapExecutor())
+_REGISTRY.register(PacketCaptureExecutor())
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +733,50 @@ class StepRunner:
             f"[{step_number}/{ctx.total_steps}] Starting step: {step_title} (type={step_type})")
 
         executor = _REGISTRY.resolve(step)
+        if not executor:
+            error_msg = f"Unknown or missing executor: '{step.get('executor', 'unknown')}'"
+            ExecutionLogger.log(ctx, "WARN", error_msg)
+            
+            # create timeline event manually
+            event_title = f"Step Failed: {step_title}"
+            event = {
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "title": event_title,
+                "description": error_msg,
+            }
+            ctx.timelineEvents.append(event)
+            if ctx.project_id:
+                try:
+                    from api.persistence import call_repository, map_timeline_event
+                    event_payload = {
+                        "projectId": ctx.project_id,
+                        "investigationId": ctx.project_id,
+                        "title": event_title,
+                        "description": error_msg,
+                        "type": "MANUAL_ACTION",
+                        "createdBy": "system",
+                        "updatedBy": "system",
+                    }
+                    mapped = map_timeline_event(event_payload)
+                    event_payload.update(mapped)
+                    call_repository("timelineEvent", "create", {"data": event_payload})
+                except Exception as err:
+                    safe_err = str(err).encode('ascii', errors='replace').decode('ascii')
+                    print(f"Failed to log timeline event: {safe_err}")
+
+            step_result = {
+                "stepId": step_id,
+                "stepNumber": step_number,
+                "title": step_title,
+                "stepType": step_type,
+                "status": "FAILED",
+                "executedAt": datetime.utcnow().isoformat() + "Z",
+                "outputs": {},
+                "summary": error_msg,
+                "duration": 0.0,
+            }
+            return step_result
+
         result = executor.execute(step, ctx)
 
         # Also store output in stepOutputs if executor didn't do it already

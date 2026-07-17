@@ -1974,6 +1974,7 @@ model PlaybookStep {
   title             String
   description       String?
   stepType          StepType
+  executor          String?
   expectedOutcome   String?
   relatedTechniques String[]        @default([])
   relatedCVEs       String[]        @default([])

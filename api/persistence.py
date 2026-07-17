@@ -1,6 +1,7 @@
 import os
 import uuid
 import requests
+import copy
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, date
 from core.config import PRISMA_API_BASE_URL
@@ -137,17 +138,24 @@ class RepositoryBackedDict(dict):
         # 4. Fallback to key if valid UUID, else generate a deterministic UUID
         return key if is_valid_uuid(key) else str(uuid.uuid5(uuid.NAMESPACE_DNS, str(key)))
 
+    def _get_merged_record(self, record: Dict) -> Dict:
+        meta = record.get("metadata")
+        if isinstance(meta, dict):
+            merged = copy.deepcopy(record)
+            merged.update(meta)
+            for field in ["steps", "artifacts", "executions"]:
+                if field in record:
+                    merged[field] = record[field]
+            return merged
+        else:
+            return record
+
     def __getitem__(self, key: str) -> Any:
         db_id = self._resolve_db_id(key)
         try:
             record = call_repository(self.repo_name, "findById", db_id)
             if record:
-                # Some repositories return the payload under a `metadata` field,
-                # while others (seeded/demo data) return the record fields at
-                # the top level. Prefer `metadata` when present, otherwise
-                # fall back to the full record.
-                meta = record.get("metadata")
-                return meta if isinstance(meta, dict) else record
+                return self._get_merged_record(record)
         except Exception:
             pass
         raise KeyError(key)
@@ -168,11 +176,17 @@ class RepositoryBackedDict(dict):
 
         db_id = self._resolve_db_id(key, mapped)
 
+        # Do NOT duplicate steps, artifacts, or executions into metadata.
+        meta_value = copy.deepcopy(value)
+        for field in ["steps", "artifacts", "executions"]:
+            if field in meta_value:
+                del meta_value[field]
+
         input_data = {
             "id": db_id,
             "createdBy": "test-user",
             "updatedBy": "test-user",
-            "metadata": value
+            "metadata": meta_value
         }
         input_data.update(mapped)
 
@@ -249,12 +263,7 @@ class RepositoryBackedDict(dict):
             records = call_repository(self.repo_name, "findMany", {"filter": {"deletedAt": None}})
             results: List[Any] = []
             for r in records:
-                meta = r.get("metadata")
-                if isinstance(meta, dict):
-                    results.append(meta)
-                else:
-                    # Fall back to top-level record when `metadata` is absent.
-                    results.append(r)
+                results.append(self._get_merged_record(r))
             return results
         except Exception:
             return []
@@ -264,14 +273,8 @@ class RepositoryBackedDict(dict):
             records = call_repository(self.repo_name, "findMany", {"filter": {"deletedAt": None}})
             keys_list: List[str] = []
             for r in records:
-                meta = r.get("metadata")
-                if isinstance(meta, dict) and self.id_field in meta:
-                    keys_list.append(meta[self.id_field])
-                else:
-                    # If the repository returned top-level fields, prefer the
-                    # configured id_field (e.g., `cveId`) and fall back to the
-                    # record UUID `id` when necessary.
-                    keys_list.append(r.get(self.id_field) or r.get("id"))
+                merged = self._get_merged_record(r)
+                keys_list.append(merged.get(self.id_field) or merged.get("id"))
             return keys_list
         except Exception:
             return []
@@ -281,14 +284,9 @@ class RepositoryBackedDict(dict):
             records = call_repository(self.repo_name, "findMany", {"filter": {"deletedAt": None}})
             items_list = []
             for r in records:
-                meta = r.get("metadata")
-                if isinstance(meta, dict) and self.id_field in meta:
-                    key = meta[self.id_field]
-                else:
-                    # Mirror keys() logic: prefer configured id_field at top level,
-                    # fall back to the record UUID when absent.
-                    key = r.get(self.id_field) or r.get("id")
-                items_list.append((key, meta if isinstance(meta, dict) else r))
+                merged = self._get_merged_record(r)
+                key = merged.get(self.id_field) or merged.get("id")
+                items_list.append((key, merged))
             return items_list
         except Exception:
             return []
