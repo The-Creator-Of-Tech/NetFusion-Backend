@@ -533,6 +533,9 @@ class ManualExecutor(StepExecutor):
     identifier = "manual"
 
     def can_execute(self, step: Dict[str, Any]) -> bool:
+        title = step.get("title", "").lower()
+        if "generate" in title and "report" in title:
+            return False
         return step.get("stepType") == "MANUAL"
 
     def _execute_internal(self, step: Dict[str, Any], ctx: WorkflowExecutionContext) -> Dict[str, Any]:
@@ -576,6 +579,12 @@ class NmapExecutor(StepExecutor):
         title = step.get("title", "").lower()
         desc = step.get("description", "").lower()
         step_type = step.get("stepType", "")
+        
+        # Exclude AI summary/investigation patterns so they route to AIInvestigationExecutor
+        is_ai = "ai summary" in title or "ai summary" in desc or "investigation" in title or "investigation" in desc
+        if is_ai:
+            return False
+
         return step_type == "AUTOMATED" and (
             "nmap" in title or "nmap" in desc or "scan" in title or "scan" in desc
         )
@@ -778,7 +787,6 @@ class PacketCaptureExecutor(StepExecutor):
                 "packetCount": packet_count,
                 "captureFilter": capture_filter,
                 "fileSize": file_size,
-                "location": capture_file,
             },
         )
         ctx.add_artifact(artifact)
@@ -1073,7 +1081,7 @@ class PCAPAnalysisExecutor(StepExecutor):
                 f.write(md_content)
 
             artifact = WorkflowArtifact(
-                name=f"PCAP Analysis - {os.path.basename(capture_file)}",
+                name=os.path.basename(artifact_path),
                 type="markdown",
                 mimeType="text/markdown",
                 producerExecutor=self.__class__.__name__,
@@ -1088,7 +1096,6 @@ class PCAPAnalysisExecutor(StepExecutor):
                     "tls_sessions_count": len(tls_sessions_list),
                     "conversations_count": len(conversations_list),
                 },
-                data=md_content
             )
             ctx.add_artifact(artifact)
             ExecutionLogger.log(ctx, "INFO", f"Analysis artifact created: {artifact_path}")
@@ -1127,6 +1134,926 @@ class PCAPAnalysisExecutor(StepExecutor):
 
 
 # ---------------------------------------------------------------------------
+# AIInvestigationExecutor
+# ---------------------------------------------------------------------------
+
+class AIInvestigationExecutor(StepExecutor):
+    identifier = "ai_investigation"
+
+    def can_execute(self, step: Dict[str, Any]) -> bool:
+        title = step.get("title", "").lower()
+        desc = step.get("description", "").lower()
+        step_type = step.get("stepType", "")
+        executor_id = step.get("executor") or step.get("executorType")
+        
+        if executor_id in ("ai_investigation", "ai", "ai_summary"):
+            return True
+            
+        return step_type == "AUTOMATED" and (
+            "ai summary" in title or "ai summary" in desc or
+            "investigation" in title or "investigation" in desc or
+            "ai_investigation" in title or "ai_investigation" in desc or
+            "ai_summary" in title or "ai_summary" in desc
+        )
+
+    def _execute_internal(self, step: Dict[str, Any], ctx: WorkflowExecutionContext) -> Dict[str, Any]:
+        self.ctx = ctx
+        import os
+        import uuid
+        
+        step_id = step.get("stepId") or step.get("id") or "ai-investigation-step"
+        config = step.get("config") or {}
+        
+        ExecutionLogger.log(ctx, "INFO", "Starting AI Investigation")
+        
+        # 1. Load and Validate Evidence
+        ExecutionLogger.log(ctx, "INFO", "Loading workflow variables")
+        
+        def get_evidence(var_name: str, default: Any) -> Any:
+            val = config.get(var_name)
+            if val is None or (isinstance(val, str) and val.startswith("${")):
+                val = ctx.get_variable(var_name)
+            return val if val is not None else default
+
+        protocols = get_evidence("protocols", [])
+        dns_queries = get_evidence("dns_queries", [])
+        http_hosts = get_evidence("http_hosts", [])
+        tls_sessions = get_evidence("tls_sessions", [])
+        conversations = get_evidence("conversations", [])
+        endpoints = get_evidence("endpoints", [])
+        statistics = get_evidence("statistics", {})
+        services = get_evidence("services", [])
+        open_ports = get_evidence("open_ports", [])
+        scan_results = get_evidence("scan_results", {})
+        
+        # Validation and type normalization
+        if not isinstance(protocols, list): protocols = []
+        if not isinstance(dns_queries, list): dns_queries = []
+        if not isinstance(http_hosts, list): http_hosts = []
+        if not isinstance(tls_sessions, list): tls_sessions = []
+        if not isinstance(conversations, list): conversations = []
+        if not isinstance(endpoints, list): endpoints = []
+        if not isinstance(statistics, dict): statistics = {}
+        if not isinstance(services, list): services = []
+        if not isinstance(open_ports, list): open_ports = []
+        if not isinstance(scan_results, dict): scan_results = {}
+        
+        # Clean lists (ensure string types, remove placeholders)
+        protocols = [str(x) for x in protocols if not (isinstance(x, str) and x.startswith("${"))]
+        dns_queries = [str(x) for x in dns_queries if not (isinstance(x, str) and x.startswith("${"))]
+        http_hosts = [str(x) for x in http_hosts if not (isinstance(x, str) and x.startswith("${"))]
+        tls_sessions = [str(x) for x in tls_sessions if not (isinstance(x, str) and x.startswith("${"))]
+        conversations = [str(x) for x in conversations if not (isinstance(x, str) and x.startswith("${"))]
+        endpoints = [str(x) for x in endpoints if not (isinstance(x, str) and x.startswith("${"))]
+        
+        clean_ports = []
+        for p in open_ports:
+            try:
+                if not (isinstance(p, str) and p.startswith("${")):
+                    clean_ports.append(int(p))
+            except (ValueError, TypeError):
+                pass
+        open_ports = clean_ports
+        
+        # 2. Correlate Evidence (Rule-based)
+        ExecutionLogger.log(ctx, "INFO", "Correlating evidence")
+        findings = []
+        recommendations = []
+        risk_score = 10  # Baseline risk
+        
+        # Rule 1: SMB (445) exposed
+        has_smb_port = 445 in open_ports or any(s.get("port") == 445 for s in services)
+        has_smb_proto = any("smb" in p.lower() or "microsoft-ds" in p.lower() for p in protocols)
+        if has_smb_port or has_smb_proto:
+            findings.append({
+                "title": "Exposed SMB Service (Port 445)",
+                "severity": "Critical",
+                "confidence": 95,
+                "evidence": [
+                    f"Port 445 is open in scan results" if has_smb_port else "",
+                    f"SMB protocol detected in traffic: {protocols}" if has_smb_proto else ""
+                ],
+                "description": "Server Message Block (SMB) protocol is exposed to the network. This is a high-risk service frequently targeted for lateral movement, credential harvesting (e.g., via NTLM relaying), and exploit execution (e.g., EternalBlue)."
+            })
+            recommendations.extend([
+                "Block external access to Port 445 (SMB) immediately.",
+                "Ensure SMBv1 is disabled and require SMB signing on internal networks.",
+                "Isolate systems exposing SMB services if they cannot be patched."
+            ])
+            risk_score += 40
+            
+        # Rule 2: MySQL/PostgreSQL exposed
+        db_ports = [3306, 5432]
+        exposed_dbs = []
+        for p in db_ports:
+            if p in open_ports or any(s.get("port") == p for s in services):
+                exposed_dbs.append(p)
+        db_service_names = ["mysql", "postgresql", "postgres"]
+        for s in services:
+            if str(s.get("service")).lower() in db_service_names:
+                exposed_dbs.append(s.get("port") or "unknown")
+                
+        if exposed_dbs:
+            findings.append({
+                "title": "Exposed Database Service",
+                "severity": "High",
+                "confidence": 90,
+                "evidence": [f"Database port/service detected: {list(set(exposed_dbs))}"],
+                "description": "An unauthenticated or network-exposed database service (MySQL or PostgreSQL) was detected. Exposing databases directly to the network increases the risk of brute-force attacks, credential theft, and unauthorized data access."
+            })
+            recommendations.extend([
+                "Restrict database ports (3306/5432) to trusted hosts or localhost only.",
+                "Enforce multi-factor authentication (MFA) or strong password policies for all database accounts.",
+                "Encrypt database connections using TLS/SSL."
+            ])
+            risk_score += 30
+
+        # Rule 3: HTTP traffic without encryption
+        has_http_proto = any(p.strip().upper() == "HTTP" for p in protocols)
+        has_http_hosts = len(http_hosts) > 0
+        has_http_port = 80 in open_ports or any(s.get("port") == 80 or "http" == str(s.get("service")).lower() for s in services)
+        if has_http_proto or has_http_hosts or has_http_port:
+            findings.append({
+                "title": "Unencrypted HTTP Communication",
+                "severity": "Medium",
+                "confidence": 85,
+                "evidence": [
+                    "HTTP protocol detected in traffic." if has_http_proto else "",
+                    f"HTTP hosts queried: {http_hosts[:5]}" if has_http_hosts else "",
+                    "Port 80 is open/HTTP service is active." if has_http_port else ""
+                ],
+                "description": "Unencrypted HTTP traffic was observed in the network capture. Transmitting sensitive data over unencrypted channels makes it vulnerable to eavesdropping, sniffing, and man-in-the-middle (MitM) attacks."
+            })
+            recommendations.extend([
+                "Enforce HTTPS/TLS (Port 443) across all web assets and client devices.",
+                "Implement HTTP Strict Transport Security (HSTS) headers.",
+                "Configure automatic HTTP-to-HTTPS redirection rules."
+            ])
+            risk_score += 15
+
+        # Rule 4: High DNS activity
+        dns_count = len(dns_queries) or statistics.get("dns_queries_count", 0)
+        if dns_count > 10:
+            findings.append({
+                "title": "High Volume of DNS Activity",
+                "severity": "Medium",
+                "confidence": 80,
+                "evidence": [f"Detected {dns_count} unique DNS queries (threshold: 10)."],
+                "description": "An elevated volume of DNS queries was detected. This pattern is characteristic of DNS reconnaissance, subdomain brute-forcing, or potential DNS-based command and control (C2) / data exfiltration tunneling."
+            })
+            recommendations.extend([
+                "Monitor DNS logs for suspicious patterns like DNS tunneling or rapid subdomain queries.",
+                "Configure DNS rate limiting on local nameservers.",
+                "Restrict DNS egress traffic to authorized enterprise nameservers only."
+            ])
+            risk_score += 10
+
+        # Rule 5: Excessive conversations
+        conv_count = len(conversations) or statistics.get("conversations_count", 0)
+        if conv_count > 20:
+            findings.append({
+                "title": "Excessive Network Conversations",
+                "severity": "Low",
+                "confidence": 75,
+                "evidence": [f"Detected {conv_count} unique conversations (threshold: 20)."],
+                "description": "A large number of unique network conversations was observed. This can indicate scanning activity, peer-to-peer applications, or an overly noisy network environment."
+            })
+            recommendations.extend([
+                "Identify host(s) generating the bulk of the conversations to ensure they are not compromised or running network scanning software.",
+                "Implement network segmentation to contain noisy broadcast or scan traffic."
+            ])
+            risk_score += 5
+
+        # Rule 6: Suspicious endpoint count
+        endpoint_count = len(endpoints) or statistics.get("endpoints_count", 0)
+        if endpoint_count > 15:
+            findings.append({
+                "title": "Suspiciously High Endpoint Count",
+                "severity": "Low",
+                "confidence": 70,
+                "evidence": [f"Detected {endpoint_count} unique endpoints (threshold: 15)."],
+                "description": "A high number of unique network endpoints (IP addresses) was identified. This could suggest broad network discovery, host sweeping, or a highly distributed set of connections."
+            })
+            recommendations.extend([
+                "Verify if network endpoints are known asset inventory members.",
+                "Investigate potential scanning or sweeping behavior from the source hosts."
+            ])
+            risk_score += 5
+
+        for f in findings:
+            f["evidence"] = [ev for ev in f["evidence"] if ev]
+
+        # 3. Calculate Risk Score & Severity
+        ExecutionLogger.log(ctx, "INFO", "Calculating risk score")
+        risk_score = max(0, min(100, risk_score))
+        if risk_score >= 90:
+            severity = "Critical"
+        elif risk_score >= 70:
+            severity = "High"
+        elif risk_score >= 40:
+            severity = "Medium"
+        else:
+            severity = "Low"
+
+        # Unique recommendations (deduped but keeping order)
+        seen = set()
+        deduped_recommendations = []
+        for r in recommendations:
+            if r not in seen:
+                seen.add(r)
+                deduped_recommendations.append(r)
+        recommendations = deduped_recommendations
+        if not recommendations:
+            recommendations = ["Continue monitoring network traffic for deviations from the baseline."]
+
+        # 4. Executive Summary
+        ExecutionLogger.log(ctx, "INFO", "Generating executive summary")
+        
+        status_bullet = "- **Investigation Status**: COMPLETED"
+        risk_bullet = f"- **Overall Risk**: {severity.upper()} ({risk_score}/100)"
+        
+        capture_overview = f"Analyzed traffic containing {statistics.get('total_packets', 0)} packets over {statistics.get('duration_seconds', 0.0)} seconds." if statistics else "Capture statistics unavailable."
+        capture_bullet = f"- **Capture Overview**: {capture_overview}"
+        
+        net_activity = f"Identified {len(protocols)} protocols ({', '.join(protocols[:5])}) across {len(endpoints)} unique endpoints and {len(conversations)} conversations."
+        net_bullet = f"- **Network Activity**: {net_activity}"
+        
+        services_desc = f"Found {len(open_ports)} open TCP ports ({', '.join(map(str, open_ports[:10]))})." if open_ports else "No open services detected."
+        services_bullet = f"- **Open Services**: {services_desc}"
+        
+        if findings:
+            findings_desc = f"Triggered {len(findings)} correlation rules: " + ", ".join(f.get('title') for f in findings)
+        else:
+            findings_desc = "No high-risk findings detected."
+        findings_bullet = f"- **Key Findings**: {findings_desc}"
+        
+        recs_desc = "; ".join(recommendations[:3])
+        recs_bullet = f"- **Recommendations**: {recs_desc}"
+        
+        conclusion = "The network posture is secure." if risk_score < 40 else "Immediate remediation is recommended to secure exposed ports/protocols."
+        conclusion_bullet = f"- **Conclusion**: {conclusion}"
+
+        executive_summary = "\n".join([
+            status_bullet,
+            risk_bullet,
+            capture_bullet,
+            net_bullet,
+            services_bullet,
+            findings_bullet,
+            recs_bullet,
+            conclusion_bullet
+        ])
+
+        # IoC Candidates
+        ioc_candidates = sorted(list(set(dns_queries + http_hosts + tls_sessions)))
+
+        # 5. Publish Variables
+        ExecutionLogger.log(ctx, "INFO", "Publishing variables")
+        ctx.set_variable("risk_score", risk_score, "number")
+        ctx.set_variable("severity", severity, "string")
+        ctx.set_variable("findings", findings, "array")
+        ctx.set_variable("recommendations", recommendations, "array")
+        ctx.set_variable("executive_summary", executive_summary, "string")
+        ctx.set_variable("ioc_candidates", ioc_candidates, "array")
+        
+        ai_investigation_data = {
+            "risk_score": risk_score,
+            "severity": severity,
+            "findings": findings,
+            "recommendations": recommendations,
+            "executive_summary": executive_summary,
+            "ioc_candidates": ioc_candidates
+        }
+        ctx.set_variable("ai_investigation", ai_investigation_data, "object")
+
+        # 6. Create Artifact
+        ExecutionLogger.log(ctx, "INFO", "Creating artifact")
+        
+        capture_file = None
+        if ctx.has_variable("capture_file"):
+            capture_file = ctx.get_variable("capture_file")
+        if not capture_file:
+            capture_file = step.get("config", {}).get("capture_file")
+            
+        capture_id = "default"
+        if capture_file and isinstance(capture_file, str):
+            capture_id = os.path.splitext(os.path.basename(capture_file))[0]
+            if capture_id.startswith("file:///"):
+                capture_id = capture_id[8:]
+            elif capture_id.startswith("file://"):
+                capture_id = capture_id[7:]
+            capture_id = os.path.splitext(os.path.basename(capture_id))[0]
+            
+        if not capture_id or not isinstance(capture_id, str):
+            capture_id = "default"
+
+        artifact_dir = None
+        if capture_file and isinstance(capture_file, str):
+            try:
+                cf_path = capture_file
+                if cf_path.startswith("file:///"): cf_path = cf_path[8:]
+                elif cf_path.startswith("file://"): cf_path = cf_path[7:]
+                artifact_dir = os.path.dirname(cf_path)
+            except Exception:
+                pass
+        if not artifact_dir or not os.path.exists(artifact_dir):
+            artifact_dir = os.path.join(os.getcwd(), "Captured_packets")
+        if not os.path.exists(artifact_dir):
+            os.makedirs(artifact_dir, exist_ok=True)
+            
+        artifact_path = os.path.join(artifact_dir, f"investigation_{capture_id}.md")
+
+        findings_md = ""
+        for i, f in enumerate(findings):
+            findings_md += f"### {i+1}. {f['title']} ({f['severity']})\n"
+            findings_md += f"- **Confidence**: {f['confidence']}%\n"
+            findings_md += f"- **Description**: {f['description']}\n"
+            if f.get("evidence"):
+                findings_md += "- **Evidence**:\n"
+                for ev in f["evidence"]:
+                    findings_md += f"  - {ev}\n"
+            findings_md += "\n"
+        if not findings_md:
+            findings_md = "*No high-risk findings identified.*\n"
+
+        evidence_md = ""
+        if dns_queries:
+            evidence_md += "### DNS Queries\n"
+            evidence_md += "\n".join(f"- `{q}`" for q in dns_queries[:20]) + "\n"
+            if len(dns_queries) > 20:
+                evidence_md += f"- *... and {len(dns_queries) - 20} more DNS queries.*\n"
+        if http_hosts:
+            evidence_md += "### HTTP Hosts\n"
+            evidence_md += "\n".join(f"- `{h}`" for h in http_hosts[:20]) + "\n"
+            if len(http_hosts) > 20:
+                evidence_md += f"- *... and {len(http_hosts) - 20} more HTTP hosts.*\n"
+        if not evidence_md:
+            evidence_md = "*No indicators or trace evidence collected.*\n"
+
+        statistics_md = ""
+        if statistics:
+            for k, v in statistics.items():
+                name_pretty = k.replace("_", " ").title()
+                statistics_md += f"- **{name_pretty}**: {v}\n"
+        else:
+            statistics_md = "*No statistics available.*\n"
+
+        ports_services_md = ""
+        if open_ports or services:
+            ports_services_md += "| Port | Service | State |\n|---|---|---|\n"
+            for s in services:
+                ports_services_md += f"| {s.get('port')} | {s.get('service')} | {s.get('state')} |\n"
+            for p in open_ports:
+                if not any(s.get("port") == p for s in services):
+                    ports_services_md += f"| {p} | Unknown | open |\n"
+        else:
+            ports_services_md = "*No open ports or services detected.*\n"
+
+        recommendations_md = "\n".join(f"- {r}" for r in recommendations)
+
+        timeline_md = ""
+        for event in ctx.timelineEvents:
+            timeline_md += f"- **[{event.get('timestamp')}] {event.get('title')}**: {event.get('description')}\n"
+
+        md_content = f"""# AI Investigation Report
+
+## Executive Summary
+{executive_summary}
+
+## Risk Score & Severity
+- **Risk Score**: {risk_score} / 100
+- **Severity**: {severity}
+
+## Findings
+{findings_md}
+
+## Evidence
+{evidence_md}
+
+## Network Statistics
+{statistics_md}
+
+## Open Ports & Services
+{ports_services_md}
+
+## Recommendations
+{recommendations_md}
+
+## Investigation Timeline
+{timeline_md}
+"""
+
+        with open(artifact_path, "w", encoding="utf-8") as f:
+            f.write(md_content)
+
+        artifact = WorkflowArtifact(
+            name=f"AI Investigation - {capture_id}",
+            type="markdown",
+            mimeType="text/markdown",
+            producerExecutor=self.__class__.__name__,
+            stepId=step_id,
+            location=artifact_path,
+            metadata={
+                "capture_id": capture_id,
+                "risk_score": risk_score,
+                "severity": severity,
+                "findings_count": len(findings)
+            },
+        )
+        ctx.add_artifact(artifact)
+
+        output = {
+            "risk_score": risk_score,
+            "severity": severity,
+            "findings": findings,
+            "recommendations": recommendations,
+            "executive_summary": executive_summary,
+            "ioc_candidates": ioc_candidates,
+            "artifactId": artifact.artifactId
+        }
+        ctx.set_step_output(step_id, output)
+
+        self.create_timeline_event(ctx, "AI Investigation Completed", f"AI Investigation completed with risk score {risk_score} ({severity}).")
+        ExecutionLogger.log(ctx, "INFO", "Investigation completed")
+
+        return {
+            "success": True,
+            "output": output,
+            "summary": f"AI Investigation completed. Risk score: {risk_score} ({severity}).",
+            "duration": 0.0
+        }
+
+
+# ---------------------------------------------------------------------------
+# ReportGeneratorExecutor
+# ---------------------------------------------------------------------------
+
+class ReportGeneratorExecutor(StepExecutor):
+    identifier = "report_generator"
+
+    def can_execute(self, step: Dict[str, Any]) -> bool:
+        title = step.get("title", "").lower()
+        desc = step.get("description", "").lower()
+        executor_id = step.get("executor") or step.get("executorType")
+        
+        if executor_id in ("report_generator", "report-generator", "report_generation"):
+            return True
+            
+        return ("generate" in title and "report" in title) or ("generate" in desc and "report" in desc)
+
+    def _execute_internal(self, step: Dict[str, Any], ctx: WorkflowExecutionContext) -> Dict[str, Any]:
+        self.ctx = ctx
+        import os
+        
+        step_id = step.get("stepId") or step.get("id") or "report-generator-step"
+        config = step.get("config") or {}
+        
+        ExecutionLogger.log(ctx, "INFO", "Starting Report Generation")
+        ExecutionLogger.log(ctx, "INFO", "Loading workflow variables")
+        
+        # Resolve from step configuration or context
+        def get_evidence(var_name: str, default: Any) -> Any:
+            val = config.get(var_name)
+            if val is None or (isinstance(val, str) and val.startswith("${")):
+                val = ctx.get_variable(var_name)
+            return val if val is not None else default
+
+        capture_file = get_evidence("capture_file", None)
+        capture_id = get_evidence("capture_id", None)
+        if not capture_id or (isinstance(capture_id, str) and capture_id.startswith("${")):
+            if capture_file and isinstance(capture_file, str) and not capture_file.startswith("${"):
+                c_path = capture_file
+                if c_path.startswith("file:///"):
+                    c_path = c_path[8:]
+                elif c_path.startswith("file://"):
+                    c_path = c_path[7:]
+                capture_id = os.path.splitext(os.path.basename(c_path))[0]
+            else:
+                capture_id = None
+        if not capture_id or not isinstance(capture_id, str):
+            capture_id = "default"
+
+        packet_count = get_evidence("packet_count", None)
+        capture_duration = get_evidence("capture_duration", None)
+        capture_interface = get_evidence("capture_interface", None)
+
+        statistics = get_evidence("statistics", {})
+        protocols = get_evidence("protocols", [])
+        endpoints = get_evidence("endpoints", [])
+        conversations = get_evidence("conversations", [])
+        dns_queries = get_evidence("dns_queries", [])
+        http_hosts = get_evidence("http_hosts", [])
+        tls_sessions = get_evidence("tls_sessions", [])
+        analysis_summary = get_evidence("analysis_summary", "")
+
+        host = get_evidence("host", "")
+        target = get_evidence("target", "")
+        services = get_evidence("services", [])
+        open_ports = get_evidence("open_ports", [])
+        scan_results = get_evidence("scan_results", {})
+
+        risk_score = get_evidence("risk_score", None)
+        severity = get_evidence("severity", None)
+        findings = get_evidence("findings", [])
+        recommendations = get_evidence("recommendations", [])
+        executive_summary = get_evidence("executive_summary", "")
+        ioc_candidates = get_evidence("ioc_candidates", [])
+        ai_investigation = get_evidence("ai_investigation", {})
+
+        # Graceful fallbacks and type cleanups
+        def clean_str(val: Any) -> str:
+            if val is None or (isinstance(val, str) and val.startswith("${")):
+                return ""
+            return str(val)
+
+        def clean_list(val: Any) -> list:
+            if not isinstance(val, list):
+                return []
+            return [x for x in val if not (isinstance(x, str) and x.startswith("${"))]
+
+        def clean_dict(val: Any) -> dict:
+            if not isinstance(val, dict):
+                return {}
+            return val
+
+        capture_file = clean_str(capture_file)
+        capture_interface = clean_str(capture_interface)
+        analysis_summary = clean_str(analysis_summary)
+        host = clean_str(host)
+        target = clean_str(target)
+        severity = clean_str(severity)
+        executive_summary = clean_str(executive_summary)
+
+        protocols = clean_list(protocols)
+        endpoints = clean_list(endpoints)
+        conversations = clean_list(conversations)
+        dns_queries = clean_list(dns_queries)
+        http_hosts = clean_list(http_hosts)
+        tls_sessions = clean_list(tls_sessions)
+        services = clean_list(services)
+        open_ports = clean_list(open_ports)
+        findings = clean_list(findings)
+        recommendations = clean_list(recommendations)
+        ioc_candidates = clean_list(ioc_candidates)
+
+        statistics = clean_dict(statistics)
+        scan_results = clean_dict(scan_results)
+        ai_investigation = clean_dict(ai_investigation)
+
+        # Normalize number fields safely
+        try:
+            if packet_count is not None and not (isinstance(packet_count, str) and packet_count.startswith("${")):
+                packet_count = int(packet_count)
+            else:
+                packet_count = None
+        except (ValueError, TypeError):
+            packet_count = None
+
+        try:
+            if capture_duration is not None and not (isinstance(capture_duration, str) and capture_duration.startswith("${")):
+                capture_duration = float(capture_duration)
+            else:
+                capture_duration = None
+        except (ValueError, TypeError):
+            capture_duration = None
+
+        try:
+            if risk_score is not None and not (isinstance(risk_score, str) and risk_score.startswith("${")):
+                risk_score = float(risk_score)
+            else:
+                risk_score = None
+        except (ValueError, TypeError):
+            risk_score = None
+
+        # Fallbacks to ai_investigation dict if direct variables were skipped
+        if risk_score is None:
+            if ai_investigation and "risk_score" in ai_investigation:
+                try:
+                    risk_score = float(ai_investigation["risk_score"])
+                except (ValueError, TypeError):
+                    pass
+        if risk_score is None:
+            risk_score = 0.0
+
+        if not severity:
+            if ai_investigation and "severity" in ai_investigation:
+                severity = str(ai_investigation["severity"])
+        if not severity:
+            severity = "Unknown"
+
+        if not findings:
+            if ai_investigation and "findings" in ai_investigation:
+                findings = ai_investigation["findings"]
+        if not findings:
+            findings = []
+
+        if not recommendations:
+            if ai_investigation and "recommendations" in ai_investigation:
+                recommendations = ai_investigation["recommendations"]
+        if not recommendations:
+            recommendations = []
+
+        if not executive_summary:
+            if ai_investigation and "executive_summary" in ai_investigation:
+                executive_summary = str(ai_investigation["executive_summary"])
+
+        if not ioc_candidates:
+            if ai_investigation and "ioc_candidates" in ai_investigation:
+                ioc_candidates = ai_investigation["ioc_candidates"]
+        if not ioc_candidates:
+            # Fallback compile from evidence
+            ioc_candidates = sorted(list(set(dns_queries + http_hosts + tls_sessions)))
+
+        # Build report sections
+        ExecutionLogger.log(ctx, "INFO", "Building Executive Summary")
+        exec_summary_md = ""
+        if executive_summary:
+            lines = [l.strip() for l in executive_summary.split("\n") if l.strip()]
+            formatted_lines = []
+            for line in lines:
+                if line.startswith("-") or line.startswith("*"):
+                    formatted_lines.append(line)
+                else:
+                    formatted_lines.append(f"- {line}")
+            exec_summary_md = "\n".join(formatted_lines)
+        else:
+            bullets = [
+                "Investigation completed successfully",
+                f"Overall Risk: {severity}",
+                f"{len(open_ports)} open ports identified",
+                "Recommended remediation included below"
+            ]
+            exec_summary_md = "\n".join(f"- {b}" for b in bullets)
+
+        ExecutionLogger.log(ctx, "INFO", "Building Risk Assessment")
+
+        ExecutionLogger.log(ctx, "INFO", "Building Network Statistics")
+        total_packets_val = packet_count if packet_count is not None else statistics.get("total_packets", statistics.get("packet_count", "N/A"))
+        protocol_count = len(protocols) if protocols else statistics.get("protocol_count", 0)
+        endpoint_count = len(endpoints) if endpoints else statistics.get("endpoint_count", 0)
+        dns_queries_count = len(dns_queries) if dns_queries else statistics.get("dns_queries_count", 0)
+        http_hosts_count = len(http_hosts) if http_hosts else statistics.get("http_hosts_count", 0)
+        tls_sessions_count = len(tls_sessions) if tls_sessions else statistics.get("tls_sessions_count", 0)
+        conversations_count = len(conversations) if conversations else statistics.get("conversations_count", 0)
+
+        # Build services table
+        services_table = "| Port | Service | State |\n|---|---|---|\n"
+        if services or open_ports:
+            displayed_ports = set()
+            for s in services:
+                port = s.get("port")
+                service_name = s.get("service") or "Unknown"
+                state = s.get("state") or "open"
+                services_table += f"| {port} | {service_name} | {state} |\n"
+                displayed_ports.add(port)
+            for p in open_ports:
+                if p not in displayed_ports:
+                    services_table += f"| {p} | Unknown | open |\n"
+        else:
+            services_table += "| - | No open services detected | - |\n"
+
+        ExecutionLogger.log(ctx, "INFO", "Building Findings")
+        findings_md = ""
+        if findings:
+            for idx, f in enumerate(findings, 1):
+                title_str = f.get("title") or "Unnamed Finding"
+                sev_str = f.get("severity") or "Low"
+                conf_str = f.get("confidence") or "N/A"
+                desc_str = f.get("description") or "No description provided."
+                evidence_list = f.get("evidence") or []
+                
+                findings_md += f"### {title_str}\n"
+                findings_md += f"- **Severity**: {sev_str}\n"
+                findings_md += f"- **Confidence**: {conf_str}%\n" if conf_str != "N/A" else "- **Confidence**: N/A\n"
+                findings_md += f"- **Description**: {desc_str}\n"
+                if evidence_list:
+                    findings_md += "- **Evidence**:\n"
+                    for ev in evidence_list:
+                        findings_md += f"  - {ev}\n"
+                findings_md += "\n"
+        else:
+            findings_md = "No findings identified.\n"
+
+        ExecutionLogger.log(ctx, "INFO", "Building Recommendations")
+        recs_md = ""
+        if recommendations:
+            for idx, r in enumerate(recommendations, 1):
+                recs_md += f"{idx}. {r}\n"
+        else:
+            recs_md = "1. Continue monitoring network traffic for anomalies.\n"
+
+        # Resolve File Size
+        file_size_str = "N/A"
+        if capture_file and os.path.exists(capture_file):
+            try:
+                size_bytes = os.path.getsize(capture_file)
+                if size_bytes > 1024 * 1024:
+                    file_size_str = f"{size_bytes / (1024 * 1024):.2f} MB ({size_bytes} bytes)"
+                else:
+                    file_size_str = f"{size_bytes / 1024:.2f} KB ({size_bytes} bytes)"
+            except Exception:
+                pass
+        if file_size_str == "N/A" and statistics and "file_size" in statistics:
+            file_size_str = str(statistics["file_size"])
+
+        # Categorize IOC Candidates
+        ips = []
+        domains = []
+        hosts = []
+        endpoints_ioc = []
+        
+        import re
+        ip_pattern = re.compile(r'^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$')
+        
+        for candidate in ioc_candidates:
+            cand_str = str(candidate).strip()
+            if not cand_str:
+                continue
+            if ip_pattern.match(cand_str):
+                ips.append(cand_str)
+            elif "." in cand_str:
+                domains.append(cand_str)
+            else:
+                hosts.append(cand_str)
+        
+        for ep in endpoints:
+            ep_str = str(ep).strip()
+            if ep_str and ep_str not in ips and ep_str not in endpoints_ioc:
+                endpoints_ioc.append(ep_str)
+
+        ips_list = "\n".join(f"- {ip}" for ip in ips) if ips else "None identified."
+        domains_list = "\n".join(f"- {d}" for d in domains) if domains else "None identified."
+        hosts_list = "\n".join(f"- {h}" for h in hosts) if hosts else "None identified."
+        endpoints_list = "\n".join(f"- {ep}" for ep in endpoints_ioc) if endpoints_ioc else "None identified."
+
+        # Compile report
+        report_time = datetime.utcnow().isoformat() + "Z"
+        
+        report_md = f"# NetFusion Investigation Report\n\n"
+        report_md += f"- **Report Title**: NetFusion Investigation Report\n"
+        report_md += f"- **Investigation ID**: {ctx.execution_id}\n"
+        report_md += f"- **Capture ID**: {capture_id}\n"
+        report_md += f"- **Report Generated Time**: {report_time}\n"
+        report_md += f"- **Workflow Name**: {ctx.playbook_name}\n"
+        report_md += f"- **Investigation Status**: {ctx.status}\n\n"
+
+        report_md += f"## Executive Summary\n\n"
+        report_md += f"{exec_summary_md}\n\n"
+
+        report_md += f"## Risk Assessment\n\n"
+        report_md += f"- **Risk Score**: {risk_score}\n"
+        report_md += f"- **Severity**: {severity}\n"
+        report_md += f"- **Total Findings**: {len(findings)}\n"
+        report_md += f"- **Total Recommendations**: {len(recommendations)}\n\n"
+
+        report_md += f"## Capture Overview\n\n"
+        report_md += f"- **Packet Count**: {packet_count if packet_count is not None else 'N/A'}\n"
+        report_md += f"- **Capture Duration**: {f'{capture_duration} seconds' if capture_duration is not None else 'N/A'}\n"
+        report_md += f"- **Capture File**: {capture_file or 'N/A'}\n"
+        report_md += f"- **Interface**: {capture_interface or 'N/A'}\n"
+        report_md += f"- **File Size**: {file_size_str}\n\n"
+
+        report_md += f"## Network Statistics\n\n"
+        report_md += f"- **Total Packets**: {total_packets_val}\n"
+        report_md += f"- **Protocol Count**: {protocol_count}\n"
+        report_md += f"- **Endpoint Count**: {endpoint_count}\n"
+        report_md += f"- **DNS Queries**: {dns_queries_count}\n"
+        report_md += f"- **HTTP Hosts**: {http_hosts_count}\n"
+        report_md += f"- **TLS Sessions**: {tls_sessions_count}\n"
+        report_md += f"- **Conversations**: {conversations_count}\n\n"
+
+        report_md += f"## Open Services\n\n"
+        report_md += f"{services_table}\n"
+
+        report_md += f"## Network Protocols\n\n"
+        if protocols:
+            report_md += "\n".join(f"- {p}" for p in protocols) + "\n\n"
+        else:
+            report_md += "No network protocols discovered.\n\n"
+
+        report_md += f"## DNS Activity\n\n"
+        if dns_queries:
+            report_md += "\n".join(f"- {q}" for q in dns_queries) + "\n\n"
+        else:
+            report_md += "No DNS activity discovered.\n\n"
+
+        report_md += f"## HTTP Hosts\n\n"
+        if http_hosts:
+            report_md += "\n".join(f"- {h}" for h in http_hosts) + "\n\n"
+        else:
+            report_md += "No HTTP hosts discovered.\n\n"
+
+        report_md += f"## TLS Sessions\n\n"
+        if tls_sessions:
+            report_md += "\n".join(f"- {t}" for t in tls_sessions) + "\n\n"
+        else:
+            report_md += "No TLS server names discovered.\n\n"
+
+        report_md += f"## Key Findings\n\n"
+        report_md += f"{findings_md}\n"
+
+        report_md += f"## Recommendations\n\n"
+        report_md += f"{recs_md}\n"
+
+        report_md += f"## IOC Candidates\n\n"
+        report_md += f"### IP Addresses\n"
+        report_md += f"{ips_list}\n\n"
+        report_md += f"### Domains\n"
+        report_md += f"{domains_list}\n\n"
+        report_md += f"### Hosts\n"
+        report_md += f"{hosts_list}\n\n"
+        report_md += f"### Suspicious Endpoints\n"
+        report_md += f"{endpoints_list}\n\n"
+
+        report_md += f"## Investigation Timeline\n\n"
+        report_md += "Packet Capture\n\n"
+        report_md += "↓\n\n"
+        report_md += "PCAP Analysis\n\n"
+        report_md += "↓\n\n"
+        report_md += "Nmap Scan\n\n"
+        report_md += "↓\n\n"
+        report_md += "AI Investigation\n\n"
+        report_md += "↓\n\n"
+        report_md += "Report Generated\n\n"
+
+        report_md += f"## Conclusion\n\n"
+        report_md += f"The investigation workflow has successfully run to completion. "
+        report_md += f"Based on the analysis, a threat score of {risk_score} / 100 ({severity}) was determined. "
+        if findings:
+            report_md += f"A total of {len(findings)} key findings were identified, indicating some level of exposure or security risk. "
+        else:
+            report_md += "No high-risk findings were detected during the analysis. "
+        report_md += f"Remediation recommendations have been compiled to guide the response team in securing the environment."
+
+        ExecutionLogger.log(ctx, "INFO", "Writing Markdown report")
+        
+        artifact_dir = None
+        if capture_file and isinstance(capture_file, str):
+            try:
+                cf_path = capture_file
+                if cf_path.startswith("file:///"): cf_path = cf_path[8:]
+                elif cf_path.startswith("file://"): cf_path = cf_path[7:]
+                artifact_dir = os.path.dirname(cf_path)
+            except Exception:
+                pass
+        if not artifact_dir or not os.path.exists(artifact_dir):
+            artifact_dir = os.path.join(os.getcwd(), "Captured_packets")
+        if not os.path.exists(artifact_dir):
+            os.makedirs(artifact_dir, exist_ok=True)
+            
+        artifact_path = os.path.abspath(os.path.join(artifact_dir, f"report_{capture_id}.md"))
+        
+        with open(artifact_path, "w", encoding="utf-8") as f_out:
+            f_out.write(report_md)
+
+        ExecutionLogger.log(ctx, "INFO", "Registering artifact")
+        
+        artifact = WorkflowArtifact(
+            name=f"Investigation Report - {capture_id}",
+            type="markdown",
+            mimeType="text/markdown",
+            producerExecutor=self.__class__.__name__,
+            stepId=step_id,
+            executionId=ctx.execution_id,
+            location=artifact_path,
+            metadata={
+                "executor": self.__class__.__name__,
+                "capture_id": capture_id,
+                "report_time": report_time,
+                "risk_score": risk_score,
+                "severity": severity,
+                "findings_count": len(findings)
+            },
+        )
+        ctx.add_artifact(artifact)
+
+        ExecutionLogger.log(ctx, "INFO", "Publishing report variables")
+        
+        ctx.set_variable("report_file", artifact_path, "file")
+        ctx.set_variable("report_generated_at", report_time, "string")
+        ctx.set_variable("report_summary", executive_summary or f"Investigation report generated with risk score {risk_score} ({severity}).", "string")
+        ctx.set_variable("report_artifact", artifact.to_dict(), "object")
+
+        # Structured output
+        output = {
+            "report_file": artifact_path,
+            "report_generated_at": report_time,
+            "report_summary": executive_summary or f"Investigation report generated with risk score {risk_score} ({severity}).",
+            "artifactId": artifact.artifactId
+        }
+        ctx.set_step_output(step_id, output)
+        
+        ExecutionLogger.log(ctx, "INFO", "Report Generation completed successfully")
+        
+        return {
+            "success": True,
+            "output": output,
+            "summary": f"Report Generation completed successfully. Created report_{capture_id}.md.",
+            "duration": 0.0
+        }
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -1141,8 +2068,16 @@ class StepExecutorRegistry:
         self._executors.append(executor)
 
     def resolve(self, step: Dict[str, Any]) -> Optional[StepExecutor]:
+        title = step.get("title", "").lower()
+        step_id = step.get("stepId") or step.get("id") or ""
+        if ("generate" in title and "report" in title) or "generate-report" in str(step_id).lower():
+            if "report_generator" in self._executors_by_id:
+                return self._executors_by_id["report_generator"]
+
         executor_id = step.get("executor") or step.get("executorType")
         if executor_id:
+            if executor_id in ("report_generator", "report-generator", "report_generation"):
+                executor_id = "report_generator"
             if executor_id in self._executors_by_id:
                 return self._executors_by_id[executor_id]
             else:
@@ -1160,6 +2095,8 @@ _REGISTRY.register(ManualExecutor())
 _REGISTRY.register(NmapExecutor())
 _REGISTRY.register(PCAPAnalysisExecutor())
 _REGISTRY.register(PacketCaptureExecutor())
+_REGISTRY.register(AIInvestigationExecutor())
+_REGISTRY.register(ReportGeneratorExecutor())
 
 
 # ---------------------------------------------------------------------------

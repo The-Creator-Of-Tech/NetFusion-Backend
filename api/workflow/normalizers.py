@@ -149,7 +149,14 @@ def normalize_playbook(raw: Dict[str, Any]) -> Dict[str, Any]:
             title_lower = title.lower()
             desc_lower = desc.lower()
             if step_type == "AUTOMATED":
-                if "nmap" in title_lower or "nmap" in desc_lower or "scan" in title_lower or "scan" in desc_lower:
+                if (
+                    "ai summary" in title_lower or "ai summary" in desc_lower or
+                    "investigation" in title_lower or "investigation" in desc_lower or
+                    "ai_investigation" in title_lower or "ai_investigation" in desc_lower or
+                    "ai_summary" in title_lower or "ai_summary" in desc_lower
+                ):
+                    executor = "ai_investigation"
+                elif "nmap" in title_lower or "nmap" in desc_lower or "scan" in title_lower or "scan" in desc_lower:
                     executor = "nmap"
                 elif "analyze pcap" in title_lower or "pcap analysis" in title_lower or "analyze pcap" in desc_lower or "pcap analysis" in desc_lower:
                     executor = "pcap_analysis"
