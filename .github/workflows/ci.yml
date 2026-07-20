@@ -1,0 +1,42 @@
+name: NetFusion Continuous Integration
+
+on:
+  push:
+    branches: [ main, release/* ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Run Complete QA Test Suite
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pytest-cov requests pydantic fastapi uvicorn
+
+      - name: Execute Full Pytest Test Suite
+        run: |
+          python -m pytest -v
+
+      - name: Execute Real-World Investigation Tests
+        run: |
+          python -m pytest tests/test_real_world_investigations.py -v
+
+      - name: Execute Performance & Security Benchmarks
+        run: |
+          python -m pytest tests/test_performance_and_security.py -v

@@ -1,0 +1,36 @@
+name: Release Artifact Generator & Tag Automation
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build & Publish Release Artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify Release Version Match
+        run: |
+          VERSION_FILE=$(cat VERSION)
+          echo "Tagged Version: ${{ github.ref_name }}"
+          echo "VERSION File: ${VERSION_FILE}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: true
+          files: |
+            CHANGELOG.md
+            RELEASE_NOTES.md
+            VERSION

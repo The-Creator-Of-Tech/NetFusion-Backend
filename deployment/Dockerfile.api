@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    tshark \
+    nmap \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+COPY requirements.txt* ./
+
+RUN pip install --no-cache-dir fastapi uvicorn psutil pyyaml pytest
+
+COPY . .
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
+  CMD curl -f http://localhost:8000/health/liveness || exit 1
+
+ENTRYPOINT ["sh", "deployment/entrypoint.sh"]
+CMD ["uvicorn", "netfusion_platform.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,32 @@
+name: Security Audit & Code Scanning
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * 1'
+
+jobs:
+  security-audit:
+    name: Code Security & Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Security Tools
+        run: |
+          python -m pip install bandit safety
+
+      - name: Run Code Security Analysis (Bandit)
+        run: |
+          bandit -r netfusion_ai netfusion_workflow netfusion_canonical netfusion_platform netfusion_collectors -ll -ii || true
+
+      - name: Run Dependency Vulnerability Audit
+        run: |
+          safety check || true

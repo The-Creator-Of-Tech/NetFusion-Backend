@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    tshark \
+    nmap \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt* ./
+RUN pip install --no-cache-dir psutil pyyaml pytest
+
+COPY . .
+
+ENTRYPOINT ["sh", "deployment/entrypoint.sh"]
+CMD ["python", "-m", "netfusion_platform.orchestrator"]

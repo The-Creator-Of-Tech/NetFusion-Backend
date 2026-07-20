@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  netfusion-api:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.api
+    container_name: netfusion-api
+    ports:
+      - "8000:8000"
+    environment:
+      - NETFUSION_ENV=production
+      - NETFUSION_LOG_LEVEL=INFO
+      - NETFUSION_JWT_SECRET=${NETFUSION_JWT_SECRET}
+      - NETFUSION_DB_URI=sqlite:////app/data/prod.db
+    volumes:
+      - netfusion-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/liveness"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: always
+
+  netfusion-worker:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.worker
+    container_name: netfusion-worker
+    environment:
+      - NETFUSION_ENV=production
+      - NETFUSION_LOG_LEVEL=INFO
+      - NETFUSION_DB_URI=sqlite:////app/data/prod.db
+    volumes:
+      - netfusion-data:/app/data
+    restart: always
+
+volumes:
+  netfusion-data:

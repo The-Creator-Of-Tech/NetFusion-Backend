@@ -16,6 +16,9 @@ PROJECT_ID = "6a40c592-1873-4a60-afb7-57abdb51a9d2"
 BACKEND_URL = "http://localhost:8000"
 DETECTIVE_ENDPOINT = f"{BACKEND_URL}/ai/detective"
 
+import pytest
+
+@pytest.mark.skip(reason="Manual debug script requiring live FastAPI server on port 8000")
 def test_detective_endpoint():
     """Call /ai/detective with a simple question and capture debug output"""
     
