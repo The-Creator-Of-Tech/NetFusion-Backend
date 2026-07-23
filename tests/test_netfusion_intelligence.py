@@ -4,7 +4,8 @@ Root test runner for netfusion_intelligence.
 
 import pytest
 
-pytest_plugins = ["netfusion_intelligence.tests.conftest"]
+# pytest_plugins is automatically imported when discovering netfusion_intelligence tests
+# pytest_plugins = ["netfusion_intelligence.tests.conftest"]
 
 from netfusion_intelligence.tests.test_engine import *
 from netfusion_intelligence.tests.test_registry import *

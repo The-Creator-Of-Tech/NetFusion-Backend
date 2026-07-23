@@ -638,7 +638,7 @@ class NmapExecutor(StepExecutor):
 
         # Build typed artifact
         artifact = WorkflowArtifact(
-            name=f"Nmap Scan - {target}",
+            name=f"Nmap_{target}.json",
             type="json",
             mimeType="application/json",
             producerExecutor=self.__class__.__name__,
@@ -773,9 +773,10 @@ class PacketCaptureExecutor(StepExecutor):
         ExecutionLogger.log(ctx, "INFO", f"Capture finished. PCAP saved to {capture_file}.")
         ExecutionLogger.log(ctx, "INFO", f"Total packets: {packet_count}")
 
-        # Build typed artifact
+        import datetime as dt_mod
+        today_str = dt_mod.date.today().strftime("%Y-%m-%d")
         artifact = WorkflowArtifact(
-            name=f"PCAP Capture - {interface}",
+            name=f"LiveCapture_{today_str}.pcap",
             type="pcap",
             mimeType="application/vnd.tcpdump.pcap",
             producerExecutor=self.__class__.__name__,
@@ -1081,7 +1082,7 @@ class PCAPAnalysisExecutor(StepExecutor):
                 f.write(md_content)
 
             artifact = WorkflowArtifact(
-                name=os.path.basename(artifact_path),
+                name="AI_Investigation_Report.md",
                 type="markdown",
                 mimeType="text/markdown",
                 producerExecutor=self.__class__.__name__,
@@ -1547,7 +1548,7 @@ class AIInvestigationExecutor(StepExecutor):
             f.write(md_content)
 
         artifact = WorkflowArtifact(
-            name=f"AI Investigation - {capture_id}",
+            name="AI_Investigation_Report.md",
             type="markdown",
             mimeType="text/markdown",
             producerExecutor=self.__class__.__name__,
@@ -2009,7 +2010,7 @@ class ReportGeneratorExecutor(StepExecutor):
         ExecutionLogger.log(ctx, "INFO", "Registering artifact")
         
         artifact = WorkflowArtifact(
-            name=f"Investigation Report - {capture_id}",
+            name="AI_Investigation_Report.md",
             type="markdown",
             mimeType="text/markdown",
             producerExecutor=self.__class__.__name__,
