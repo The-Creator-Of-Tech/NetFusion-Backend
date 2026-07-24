@@ -70,8 +70,24 @@ def create_or_update_session(
             if value is not None:
                 session[key] = value
 
+    if "trafficIntelligence" not in session and isinstance(session.get("analysis"), dict):
+        ti = session["analysis"].get("trafficIntelligence")
+        if ti:
+            session["trafficIntelligence"] = ti
+
+    if not session.get("packetCount") and isinstance(session.get("trafficIntelligence"), dict):
+        ts = session["trafficIntelligence"].get("trafficSummary")
+        if isinstance(ts, dict) and ts.get("totalPackets"):
+            session["packetCount"] = ts.get("totalPackets")
+    elif not session.get("packetCount") and isinstance(session.get("analysis"), dict):
+        if session["analysis"].get("total_packets"):
+            session["packetCount"] = session["analysis"].get("total_packets")
+
     _capture_sessions[project_id] = session
-    print("=== CAPTURE SESSION SAVED ===")
+    print(f"=== CAPTURE SESSION SAVED for project {project_id} (Packets: {session.get('packetCount')}) ===")
+    
+    # Auto-save file on disk for fallback
+    save_session_to_file(project_id, session)
     return session
 
 

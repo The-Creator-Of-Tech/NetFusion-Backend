@@ -113,15 +113,23 @@ def start_capture(interface_id: str) -> dict:
     if _capture_process:
         return {"error": "Capture already running"}
 
-    _capture_file = rf"C:\Netfusion\NetFusion-Agent\Captured_packets\capture_{int(time.time())}.pcapng"
+    target_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Captured_packets")
+    os.makedirs(target_dir, exist_ok=True)
+    _capture_file = os.path.join(target_dir, f"capture_{int(time.time())}.pcapng")
 
     _capture_process = subprocess.Popen(
         [TSHARK_PATH, "-i", interface_id, "-w", _capture_file]
     )
 
+    print(f"=== [STAGE 1: LIVE CAPTURE START] ===")
+    print(f"  Interface: {interface_id}")
+    print(f"  File Path: {_capture_file}")
+    print(f"  Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+
     return {
         "status": "started",
         "interface": interface_id,
+        "file": _capture_file,
     }
 
 
@@ -139,15 +147,29 @@ def stop_capture() -> dict:
     if not _capture_process:
         return {"error": "No capture running"}
 
-    _capture_process.terminate()
-    _capture_process.wait()
+    try:
+        _capture_process.terminate()
+        _capture_process.wait(timeout=5)
+    except Exception:
+        try:
+            _capture_process.kill()
+            _capture_process.wait()
+        except Exception:
+            pass
     _capture_process = None
 
     _last_capture_file = _capture_file
+    file_size = os.path.getsize(_capture_file) if _capture_file and os.path.exists(_capture_file) else 0
+
+    print(f"=== [STAGE 1: LIVE CAPTURE STOP] ===")
+    print(f"  File Path: {_capture_file}")
+    print(f"  File Size: {file_size} bytes")
+    print(f"  Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
 
     return {
         "stopped": True,
         "file": _capture_file,
+        "fileSize": file_size,
     }
 
 
@@ -161,7 +183,7 @@ def reset_capture_state() -> None:
     if _capture_process:
         try:
             _capture_process.terminate()
-            _capture_process.wait()
+            _capture_process.wait(timeout=2)
         except Exception:
             pass
         _capture_process = None
@@ -199,19 +221,27 @@ def analyze_pcap(path: str) -> dict:
     result = packet_service.analyze_pcap_file(path)
 
     if not isinstance(result, dict) or result.get("error"):
+        print(f"=== [STAGE 2: PCAP ANALYSIS FAILED] Path: {path}, Error: {result.get('error') if isinstance(result, dict) else result} ===")
         return result
 
     packets_full = result.get("packets", [])
     traffic_intel = _build_traffic_intelligence(packets_full)
     _latest_traffic_intelligence = traffic_intel
 
-    try:
-        print("=== TRAFFIC INTELLIGENCE ===")
-        print("topTalkers:", json.dumps(traffic_intel.get("topTalkers", [])))
-        print("topBandwidthConsumers:", json.dumps(traffic_intel.get("topBandwidthConsumers", [])))
-        print("trafficSummary:", json.dumps(traffic_intel.get("trafficSummary", {})))
-    except Exception:
-        print("=== TRAFFIC INTELLIGENCE (could not serialize) ===")
+    total_packets = result.get("total_packets", len(packets_full))
+    file_size = os.path.getsize(path) if os.path.exists(path) else 0
+    protocols_list = list(result.get("protocols", {}).keys()) if isinstance(result.get("protocols"), dict) else []
+    top_talkers = traffic_intel.get("topTalkers", [])
+    flow_count = result.get("conversation_count", len(result.get("conversations", [])))
+
+    print(f"=== [STAGE 2: PCAP ANALYSIS COMPLETE] ===")
+    print(f"  Input Path: {path}")
+    print(f"  File Size: {file_size} bytes")
+    print(f"  Packet Count: {total_packets}")
+    print(f"  Protocol Count: {len(protocols_list)} ({protocols_list[:5]})")
+    print(f"  Top Talkers Count: {len(top_talkers)}")
+    print(f"  Flow Count: {flow_count}")
+    print(f"  Traffic Summary: {json.dumps(traffic_intel.get('trafficSummary', {}))}")
 
     result["assets"] = build_assets_from_packets(packets_full)
     result["trafficIntelligence"] = traffic_intel

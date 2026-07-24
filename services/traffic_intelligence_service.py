@@ -61,10 +61,10 @@ def build_traffic_intelligence(packets: list) -> dict:
 
     # Process each packet
     for packet in packets:
-        src = packet.get("src", "").strip()
-        dst = packet.get("dst", "").strip()
-        protocol = packet.get("protocol", "").strip()
-        length = packet.get("length", "0").strip()
+        src = str(packet.get("src") or packet.get("src_ip") or "").strip()
+        dst = str(packet.get("dst") or packet.get("dst_ip") or "").strip()
+        protocol = str(packet.get("protocol") or "").strip()
+        length = str(packet.get("length", "0")).strip()
 
         # Track length as integer
         try:

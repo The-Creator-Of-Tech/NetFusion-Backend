@@ -344,6 +344,11 @@ def test_workflow_end_to_end_integration(tmp_path):
                             
                             # Run workflow
                             WorkflowExecutionManager.run_execution_background(ctx)
+                            import time
+                            for _ in range(100):
+                                if ctx.status in ("COMPLETED", "FAILED"):
+                                    break
+                                time.sleep(0.1)
                             
     # Verify execution complete
     assert ctx.status == "COMPLETED"

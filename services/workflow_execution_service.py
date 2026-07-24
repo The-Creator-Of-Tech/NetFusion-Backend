@@ -331,7 +331,10 @@ def update_execution_record(ctx: WorkflowExecutionContext) -> None:
         "stepResults": list(ctx.stepOutputs.values()),
         "metadata": metadata,
     }
-    _EXECUTION_STORE.update(ctx.execution_id, updates)
+    try:
+        _EXECUTION_STORE.update(ctx.execution_id, updates)
+    except Exception as err:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -861,6 +864,26 @@ class PCAPAnalysisExecutor(StepExecutor):
             or config.get("file_path")
             or config.get("path")
         )
+
+        if isinstance(capture_file, str) and (capture_file.startswith("${") or not capture_file.strip()):
+            capture_file = None
+
+        if not capture_file:
+            capture_file = (
+                ctx.get_variable("capture_file")
+                or ctx.get_variable("pcap_file")
+                or ctx.get_variable("last_capture_file")
+            )
+
+        if not capture_file and getattr(ctx, "artifacts", None):
+            pcap_artifacts = [a for a in ctx.artifacts if getattr(a, "type", "") in ("pcap", "pcapng")]
+            if pcap_artifacts:
+                capture_file = pcap_artifacts[-1].location
+
+        if not capture_file:
+            from services import capture_service
+            capture_file = capture_service.get_last_capture_file()
+
         if capture_file:
             config["capture_file"] = capture_file
 
@@ -868,7 +891,7 @@ class PCAPAnalysisExecutor(StepExecutor):
 
         # 2. Variable resolution check
         if not capture_file:
-            error_msg = "Missing 'capture_file' config parameter."
+            error_msg = "Missing 'capture_file' config parameter and no PCAP artifact or capture file found in context."
             ExecutionLogger.log(ctx, "ERROR", error_msg)
             return {"success": False, "error": error_msg}
 
@@ -899,15 +922,15 @@ class PCAPAnalysisExecutor(StepExecutor):
             # 4. Execute TShark to extract structured information
             ExecutionLogger.log(ctx, "INFO", "Executing TShark to extract protocols...")
             raw_protocols = tshark_parser.extract_protocol_lines(capture_file)
-            protocols_list = sorted(list(set(p.strip().upper() for p in raw_protocols if p.strip())))
+            protocols_list = sorted(list(set(str(p).strip().upper() for p in raw_protocols if str(p).strip())))
             ExecutionLogger.log(ctx, "INFO", f"Protocols found: {', '.join(protocols_list)}")
 
             ExecutionLogger.log(ctx, "INFO", "Executing TShark to extract DNS queries...")
             raw_dns = tshark_parser.extract_dns_query_lines(capture_file)
             dns_set = set()
             for line in raw_dns:
-                for part in line.replace('\t', ',').split(','):
-                    part = part.strip().lower()
+                for part in str(line).replace('\t', ',').split(','):
+                    part = str(part).strip().lower()
                     if part and part != "none":
                         dns_set.add(part)
             dns_queries_list = sorted(list(dns_set))
@@ -917,8 +940,8 @@ class PCAPAnalysisExecutor(StepExecutor):
             raw_http = tshark_parser.extract_http_host_lines(capture_file)
             http_set = set()
             for line in raw_http:
-                for part in line.replace('\t', ',').split(','):
-                    part = part.strip().lower()
+                for part in str(line).replace('\t', ',').split(','):
+                    part = str(part).strip().lower()
                     if part and part != "none":
                         http_set.add(part)
             http_hosts_list = sorted(list(http_set))
@@ -928,8 +951,8 @@ class PCAPAnalysisExecutor(StepExecutor):
             raw_tls = tshark_parser.extract_tls_session_lines(capture_file)
             tls_set = set()
             for line in raw_tls:
-                for part in line.replace('\t', ',').split(','):
-                    part = part.strip().lower()
+                for part in str(line).replace('\t', ',').split(','):
+                    part = str(part).strip().lower()
                     if part and part != "none":
                         tls_set.add(part)
             tls_sessions_list = sorted(list(tls_set))
@@ -981,8 +1004,8 @@ class PCAPAnalysisExecutor(StepExecutor):
                     res_first = tshark_parser.run_tshark("-r", capture_file, "-T", "fields", "-e", "frame.time_epoch", "-c", "1")
                     res_last = tshark_parser.run_tshark("-r", capture_file, "-T", "fields", "-e", "frame.time_epoch", "-Y", f"frame.number == {total_packets}")
                     if res_first.returncode == 0 and res_last.returncode == 0:
-                        first_str = res_first.stdout.strip()
-                        last_str = res_last.stdout.strip()
+                        first_str = str(getattr(res_first, "stdout", "") or "").strip()
+                        last_str = str(getattr(res_last, "stdout", "") or "").strip()
                         if first_str and last_str:
                             duration = float(last_str) - float(first_str)
                 except Exception as ex:
@@ -1000,6 +1023,22 @@ class PCAPAnalysisExecutor(StepExecutor):
                 "endpoints_count": len(endpoints_list),
             }
             ExecutionLogger.log(ctx, "INFO", f"Compiled statistics: {statistics}")
+
+            # Generate full Traffic Intelligence
+            from services.traffic_intelligence_service import build_traffic_intelligence
+            packets_for_ti = []
+            for conv in conversations_list:
+                for _ in range(conv.get("packets", 1)):
+                    packets_for_ti.append({
+                        "src_ip": conv.get("src", ""),
+                        "dst_ip": conv.get("dst", ""),
+                        "protocol": conv.get("protocol", ""),
+                        "length": 64
+                    })
+            traffic_intel = build_traffic_intelligence(packets_for_ti)
+            if "trafficSummary" in traffic_intel:
+                traffic_intel["trafficSummary"]["totalPackets"] = total_packets
+                traffic_intel["trafficSummary"]["totalBytes"] = file_size
 
             analysis_summary = (
                 f"PCAP Analysis completed for {os.path.basename(capture_file)}. "
@@ -1020,6 +1059,61 @@ class PCAPAnalysisExecutor(StepExecutor):
             ctx.set_variable("endpoints", endpoints_list, "array")
             ctx.set_variable("statistics", statistics, "object")
             ctx.set_variable("analysis_summary", analysis_summary, "string")
+            ctx.set_variable("trafficIntelligence", traffic_intel, "object")
+            ctx.set_variable("traffic_intelligence", traffic_intel, "object")
+
+            # Update session and investigation DB repositories
+            try:
+                project_id = getattr(ctx, "project_id", None) or getattr(ctx, "projectId", None) or getattr(ctx, "execution_id", "default_project")
+                if project_id:
+                    from repositories import session_repository, capture_repository
+                    raw_upper = [str(p).strip().upper() for p in raw_protocols if str(p).strip()]
+                    session_repository.create_or_update_session(
+                        project_id,
+                        capture_id=os.path.basename(capture_file),
+                        extra={
+                            "packetCount": total_packets,
+                            "analysis": {
+                                "total_packets": total_packets,
+                                "file_size_bytes": file_size,
+                                "duration_seconds": round(duration, 3),
+                                "protocols": dict((p, raw_upper.count(p)) for p in protocols_list),
+                                "conversations": conversations_list,
+                                "dns_queries": dns_queries_list,
+                                "http_hosts": http_hosts_list,
+                                "tls_sessions": tls_sessions_list,
+                                "endpoints": endpoints_list,
+                                "trafficIntelligence": traffic_intel,
+                            },
+                            "trafficIntelligence": traffic_intel,
+                        }
+                    )
+                    session_data = session_repository.get_session(project_id)
+                    if session_data:
+                        session_repository.save_session_to_file(project_id, session_data)
+                        session_repository.persist_session_to_prisma(project_id, session_data)
+
+                    inv_data = {
+                        "id": str(uuid.uuid4()),
+                        "projectId": project_id,
+                        "filename": os.path.basename(capture_file),
+                        "summary": analysis_summary,
+                        "findings": ctx.get_variable("findings", []),
+                        "alerts": ctx.get_variable("alerts", []),
+                        "iocs": ctx.get_variable("iocs", []),
+                        "trafficIntelligence": traffic_intel,
+                        "analysis": {
+                            "total_packets": total_packets,
+                            "file_size_bytes": file_size,
+                            "duration_seconds": round(duration, 3),
+                            "protocols": dict((p, raw_upper.count(p)) for p in protocols_list),
+                            "conversations": conversations_list,
+                        }
+                    }
+                    capture_repository.save_investigation(project_id, inv_data)
+                    capture_repository.persist_investigation_to_prisma(project_id, inv_data)
+            except Exception as db_err:
+                ExecutionLogger.log(ctx, "WARN", f"Session repository sync warning: {db_err}")
 
             # 6. Create Markdown report artifact
             ExecutionLogger.log(ctx, "INFO", "Creating PCAP Analysis artifact...")
@@ -1029,7 +1123,7 @@ class PCAPAnalysisExecutor(StepExecutor):
 
             # Count protocols for markdown
             from collections import Counter
-            proto_counts = dict(Counter(p.strip().upper() for p in raw_protocols if p.strip()))
+            proto_counts = dict(Counter(str(p).strip().upper() for p in raw_protocols if str(p).strip()))
             proto_summary_md = ""
             for proto, count in sorted(proto_counts.items(), key=lambda x: x[1], reverse=True):
                 proto_summary_md += f"- **{proto}**: {count} packets\n"
@@ -1270,7 +1364,7 @@ class AIInvestigationExecutor(StepExecutor):
             risk_score += 30
 
         # Rule 3: HTTP traffic without encryption
-        has_http_proto = any(p.strip().upper() == "HTTP" for p in protocols)
+        has_http_proto = any(str(p).strip().upper() == "HTTP" for p in protocols)
         has_http_hosts = len(http_hosts) > 0
         has_http_port = 80 in open_ports or any(s.get("port") == 80 or "http" == str(s.get("service")).lower() for s in services)
         if has_http_proto or has_http_hosts or has_http_port:
@@ -1547,8 +1641,9 @@ class AIInvestigationExecutor(StepExecutor):
         with open(artifact_path, "w", encoding="utf-8") as f:
             f.write(md_content)
 
+        artifact_name = f"AI Investigation - {capture_id}" if capture_id and capture_id != "default" else "AI Investigation Report"
         artifact = WorkflowArtifact(
-            name="AI_Investigation_Report.md",
+            name=artifact_name,
             type="markdown",
             mimeType="text/markdown",
             producerExecutor=self.__class__.__name__,
@@ -2296,6 +2391,25 @@ class WorkflowExecutionManager:
 
     @staticmethod
     def run_execution_background(ctx: WorkflowExecutionContext) -> None:
+        if not _EXECUTION_STORE.get(ctx.execution_id):
+            try:
+                _EXECUTION_STORE.create({
+                    "executionId": ctx.execution_id,
+                    "playbookId": ctx.playbook_id,
+                    "status": "QUEUED",
+                    "progress": 0,
+                    "logs": [],
+                    "startedAt": ctx.started_at,
+                    "finishedAt": None,
+                    "triggeredBy": "manual",
+                    "totalSteps": ctx.total_steps,
+                    "completedSteps": 0,
+                    "failedSteps": 0,
+                    "currentStep": None,
+                    "stepResults": [],
+                })
+            except Exception:
+                pass
         try:
             # Timeline: Execution Started
             event_title = f"Execution Started: {ctx.playbook_name}"

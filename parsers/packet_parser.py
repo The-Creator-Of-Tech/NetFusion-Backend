@@ -62,14 +62,14 @@ def parse_packets_from_tshark_output(stdout: str) -> List[dict]:
 
 
 def parse_conversation_line(line: str):
-    parts = line.split("\t")
+    parts = str(line).split("\t")
 
     if len(parts) < 3:
         return None
 
-    src = parts[0].strip()
-    dst = parts[1].strip()
-    protocol = parts[2].strip()
+    src = str(parts[0]).strip()
+    dst = str(parts[1]).strip()
+    protocol = str(parts[2]).strip()
 
     if not src or not dst:
         return None
@@ -78,31 +78,28 @@ def parse_conversation_line(line: str):
 
 
 def parse_http_request_row(line: str):
-    parts = line.split("\t")
+    parts = str(line).split("\t")
 
-    while len(parts) < 3:
-        parts.append("")
-
-    host = parts[0].strip()
-    method = parts[1].strip()
-    uri = parts[2].strip()
-
-    if not host and not method and not uri:
+    if len(parts) < 3:
         return None
 
-    return {
-        "host": host,
-        "method": method,
-        "uri": uri,
-    }
+    host = str(parts[0]).strip()
+    method = str(parts[1]).strip()
+    uri = str(parts[2]).strip()
+
+    if not host:
+        return None
+
+    return host, method, uri
 
 
-def parse_dns_domains(lines: List[str]) -> List[str]:
+def parse_dns_queries(lines: List[str]):
     domains = []
 
     for line in lines:
-        domain = line.strip()
-        if domain:
+        domain = str(line).strip()
+
+        if domain and domain != "none":
             domains.append(domain)
 
     return sorted(list(set(domains)))

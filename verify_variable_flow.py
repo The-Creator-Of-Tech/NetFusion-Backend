@@ -16,6 +16,7 @@ class _FakeExecStore:
     def __init__(self, *a, **kw): pass
     def create(self, r): _fake_updates["created"] = r; return r
     def update(self, eid, upd): _fake_updates[eid] = upd; return True
+    def get(self, eid): return _fake_updates.get(eid)
     def get_by_id(self, eid): return _fake_updates.get(eid)
     def get_by_playbook(self, pid): return []
     def get_all(self, project_id=None): return []
