@@ -90,6 +90,49 @@ class SchedulerStopped(DomainEvent):
 
 
 # -------------------------------------------------------------------------
+# NVD Enterprise CVE Intelligence Domain Events
+# -------------------------------------------------------------------------
+
+@dataclass
+class NvdImportStarted(DomainEvent):
+    feed_id: str = "nvd_cve_2.0"
+    import_id: str = ""
+
+
+@dataclass
+class NvdImportCompleted(DomainEvent):
+    feed_id: str = "nvd_cve_2.0"
+    import_id: str = ""
+    version_id: str = ""
+    duration_seconds: float = 0.0
+    records_count: int = 0
+
+
+@dataclass
+class NvdImportFailed(DomainEvent):
+    feed_id: str = "nvd_cve_2.0"
+    import_id: str = ""
+    error_message: str = ""
+
+
+@dataclass
+class CveCreated(DomainEvent):
+    cve_id: str = ""
+    severity: str = "UNKNOWN"
+    cvss_score: float = 0.0
+    canonical_uuid: str = ""
+
+
+@dataclass
+class CveUpdated(DomainEvent):
+    cve_id: str = ""
+    severity: str = "UNKNOWN"
+    cvss_score: float = 0.0
+    canonical_uuid: str = ""
+
+
+
+# -------------------------------------------------------------------------
 # Security & Trust Verification Domain Events
 # -------------------------------------------------------------------------
 

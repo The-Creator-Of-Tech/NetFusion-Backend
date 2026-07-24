@@ -63,7 +63,7 @@ def call_repository(repo_name: str, method_name: str, *args) -> Any:
     print("CALL_REPOSITORY EXECUTED")
     url = f"{PRISMA_API_BASE_URL}/api/repository/{repo_name}/{method_name}"
     serialized_args = serialize_value(list(args))
-    resp = requests.post(url, json={"args": serialized_args}, timeout=30)
+    resp = requests.post(url, json={"args": serialized_args}, timeout=(1.0, 5.0))
     if resp.status_code >= 400:
         raise Exception(f"Repository call failed [repo: {repo_name}, method: {method_name}]: {resp.text}")
         

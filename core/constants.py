@@ -639,3 +639,26 @@ REPORT_ENGINE_VERSION: str = "report-engine-v1"
 # Version for the API layer.
 # Bump when the API contract, response shapes, or error codes change.
 API_LAYER_VERSION: str = "api-layer-v1"
+
+# ---------------------------------------------------------------------------
+# IL-8 — Unified Threat Knowledge Graph constants
+# ---------------------------------------------------------------------------
+
+# Engine version — bump when graph algorithms, node/edge schema, or fusion
+# logic changes in a breaking way.
+UTKG_ENGINE_VERSION: str = "utkg-engine-v1"
+
+# Default max traversal depth for BFS/DFS operations.
+UTKG_DEFAULT_MAX_DEPTH: int = 3
+
+# Default node limit for traversal / subgraph queries.
+UTKG_DEFAULT_NODE_LIMIT: int = 500
+
+# Confidence decay factor applied per hop during confidence propagation.
+UTKG_CONFIDENCE_DECAY: float = 0.8
+
+# Maximum number of nodes used for statistics sample (degree dist, APL, etc.)
+UTKG_STATS_SAMPLE_SIZE: int = 5000
+
+# Maximum cached path entries retained in the path table.
+UTKG_PATH_CACHE_LIMIT: int = 10000

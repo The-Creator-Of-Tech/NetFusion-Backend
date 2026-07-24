@@ -228,13 +228,12 @@ def download_artifact(executionId: str, artifactId: str):
             f"locationExists={bool(location and os.path.exists(location))}"
         )
 
-        # ── Filename construction ────────────────────────────────────────────
+        # ── Filename construction & UUID stripping ───────────────────────────
+        import re, datetime
         safe_name = "".join(c for c in name if c.isalnum() or c in "._- ").strip()
         if not safe_name:
             safe_name = "artifact"
 
-        # Prefer the real file extension from location over the type-derived one.
-        # This correctly handles .pcapng files whose artifact type is "pcap".
         if location:
             real_ext = os.path.splitext(location)[1].lower()  # e.g. ".pcapng"
         else:
@@ -252,14 +251,37 @@ def download_artifact(executionId: str, artifactId: str):
             "report":   ".md",
         }
         fallback_ext = ext_map.get(art_type, "")
-        # Use the real file extension when available, otherwise fall back to the
-        # type-derived extension.
         chosen_ext = real_ext if real_ext else fallback_ext
 
-        if chosen_ext and not safe_name.lower().endswith(chosen_ext):
-            filename = f"{safe_name}{chosen_ext}"
+        producer = artifact_dict.get("producerExecutor", "")
+
+        # Standardize known workflow artifact display filenames per production specification
+        if art_type in ["markdown", "report"] or "investigation" in name.lower() or "analysis" in name.lower() or "report" in name.lower() or producer in ["ReportGeneratorExecutor", "AIInvestigationExecutor", "PCAPAnalysisExecutor"]:
+            filename = "AI_Investigation_Report.md"
+        elif art_type in ["pcap", "pcapng"] or "capture" in name.lower() or producer == "PacketCaptureExecutor":
+            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            ext = chosen_ext if chosen_ext in [".pcap", ".pcapng"] else ".pcap"
+            filename = f"LiveCapture_{today_str}{ext}"
+        elif art_type == "json" and ("nmap" in name.lower() or producer == "NmapExecutor"):
+            target_match = re.search(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", name)
+            if target_match:
+                filename = f"Nmap_{target_match.group(1)}.json"
+            else:
+                target_var = artifact_dict.get("metadata", {}).get("target", "scan")
+                filename = f"Nmap_{target_var}.json"
         else:
-            filename = safe_name
+            # Strip storage UUIDs from fallback display filenames
+            clean_name = re.sub(r"[-_]?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", "", name)
+            clean_name = re.sub(r"[-_]?[0-9a-fA-F]{32}", "", clean_name)
+            clean_name = re.sub(r"[-_]?[0-9a-fA-F]{8}(?=\.|$)", "", clean_name)
+            clean_base = os.path.splitext(clean_name)[0]
+            clean_base = re.sub(r"[^\w\.-]", "_", clean_base).strip("_")
+            if not clean_base:
+                clean_base = "Artifact"
+            if chosen_ext and not clean_base.lower().endswith(chosen_ext):
+                filename = f"{clean_base}{chosen_ext}"
+            else:
+                filename = clean_base
 
         # ── Resolution: location takes strict priority ───────────────────────
         if location and os.path.exists(location):
