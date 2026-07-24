@@ -2589,26 +2589,39 @@ def host_mitre(ip: str):
 
 
 def extract_domains_from_host(ip):
-    """Extract domains from DNS queries and service advertisements."""
+    """Extract domains from DNS queries, HTTP host headers, TLS SNI, and service advertisements."""
     domains = set()
     
-    _lcf = capture_service.get_last_capture_file()
+    _lcf = (
+        capture_service.get_last_capture_file()
+        or capture_service.get_capture_file()
+        or capture_service.get_last_analyzed_file()
+    )
     if not _lcf or not os.path.exists(_lcf):
         return list(domains)
     
     try:
+        from parsers.packet_parser import ip_matches_packet
         packets = packet_service.get_packet_list(_lcf)
         for p in packets:
-            if (p.get("src") == ip or p.get("dst") == ip):
+            if ip_matches_packet(ip, p.get("src")) or ip_matches_packet(ip, p.get("dst")):
+                dq = p.get("dns_query", "").strip()
+                if dq and dq.lower() != "none":
+                    domains.add(dq)
+                hh = p.get("http_host", "").strip()
+                if hh:
+                    domains.add(hh)
+                ts = p.get("tls_sni", "").strip()
+                if ts:
+                    domains.add(ts)
+                
                 info = p.get("info", "").lower()
-                # Extract common domain patterns from packet info
                 if "dns" in info or "mdns" in info:
-                    # Very basic domain extraction - in reality would parse DNS payloads
                     parts = info.split()
                     for part in parts:
                         if "." in part and len(part) > 4:
                             domains.add(part.strip("(),"))
-    except:
+    except Exception:
         pass
     
     return list(domains)
@@ -2690,15 +2703,15 @@ def ai_device_profile(data: dict):
     print(f"Packet Count: {profile['packet_count']}")
     
     # Extract domains
-    domains = extract_domains_from_host(ip)
+    domains = profile.get("observed_domains") or extract_domains_from_host(ip)
     print(f"Domains Found: {len(domains)}")
     
     # Classify activities
     activities = classify_activity(domains)
     print(f"Activities Found: {len(activities)}")
     
-    # RULE 3: Return early if insufficient evidence
-    if len(domains) == 0 and profile["packet_count"] < 10:
+    # Return early if insufficient evidence (< 5 packets and no domains)
+    if len(domains) == 0 and profile["packet_count"] < 5:
         print("\nINSUFFICIENT EVIDENCE - Early return")
         return {
             "ip": ip,
@@ -2710,13 +2723,13 @@ def ai_device_profile(data: dict):
             "security_assessment": "No meaningful evidence available for analysis.",
             "malicious_activity": "None detected",
             "recommendations": ["Collect more network data", "Monitor for sustained communication patterns"],
-            "narrative": "Insufficient evidence available to determine device activity. Only 2 packets captured with no observable domains. Unable to classify device type or activities without domain evidence.",
+            "narrative": f"Insufficient evidence available to determine device activity. {profile['packet_count']} packet(s) captured with no observable domains.",
             "evidence_summary": {
                 "packet_count": profile["packet_count"],
                 "protocols": profile["protocols"],
                 "domains_count": 0,
                 "alerts_count": 0,
-                "reason": "Insufficient evidence (no domains, <10 packets)"
+                "reason": "Insufficient evidence (no domains)"
             }
         }
     
@@ -2726,7 +2739,7 @@ def ai_device_profile(data: dict):
     # Build MITRE mappings
     mitre_info = build_host_mitre(ip, profile)
     
-    # Identify device type - RULE 1: Only use domains for inference, not protocols
+    # Identify device type
     device_guess = identify_device_type(" ".join(domains))
     print(f"Device Guess: {device_guess}")
     
@@ -2734,9 +2747,16 @@ def ai_device_profile(data: dict):
     evidence = {
         "ip": ip,
         "packet_count": profile["packet_count"],
+        "inbound_packets": profile.get("inbound_packets", 0),
+        "outbound_packets": profile.get("outbound_packets", 0),
+        "total_bytes": profile.get("total_bytes", 0),
         "protocols": profile["protocols"],
+        "flows_count": profile.get("flows_count", 0),
         "top_peers": profile["top_peers"],
         "observed_domains": domains,
+        "dns_queries": profile.get("dns_queries", []),
+        "http_hosts": profile.get("http_hosts", []),
+        "tls_snis": profile.get("tls_snis", []),
         "observed_alerts": [
             {
                 "severity": a.get("severity"),

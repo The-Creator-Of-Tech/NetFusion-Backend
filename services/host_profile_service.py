@@ -29,13 +29,18 @@ from utils.network import lookup_mac_vendor, select_best_mac_for_ip
 
 def get_host_packets(ip: str) -> list:
     """Return all packets where *ip* appears as source or destination."""
-    _lcf = capture_service.get_last_capture_file()
+    _lcf = (
+        capture_service.get_last_capture_file()
+        or capture_service.get_capture_file()
+        or capture_service.get_last_analyzed_file()
+    )
     if not _lcf or not os.path.exists(_lcf):
         return []
     packets = packet_service.get_packet_list(_lcf)
+    from parsers.packet_parser import ip_matches_packet
     return [
         p for p in packets
-        if p.get("src") == ip or p.get("dst") == ip
+        if ip_matches_packet(ip, p.get("src")) or ip_matches_packet(ip, p.get("dst"))
     ]
 
 
@@ -47,28 +52,76 @@ def build_host_profile(ip: str) -> dict:
     """
     Build a complete host profile for *ip* from the current capture file.
 
-    Returns a dict with keys: ip, packet_count, protocols, top_peers,
-    risk_score, risk_reasons, packets, macAddress, deviceName, hostname,
-    vendor.
+    Returns a dict with keys: ip, packet_count, inbound_packets, outbound_packets,
+    total_bytes, inbound_bytes, outbound_bytes, protocols, top_peers, dns_queries,
+    http_hosts, tls_snis, observed_domains, risk_score, risk_reasons, packets,
+    macAddress, deviceName, hostname, vendor.
     """
+    from parsers.packet_parser import ip_matches_packet
+
     packets = get_host_packets(ip)
     protocols = {}
     peers = {}
+    inbound_packets = 0
+    outbound_packets = 0
+    inbound_bytes = 0
+    outbound_bytes = 0
+    total_bytes = 0
+    dns_queries = set()
+    http_hosts = set()
+    tls_snis = set()
+    unique_ports = set()
+    flows = set()
 
     for packet in packets:
         protocol = packet.get("protocol", "")
         if protocol:
             protocols[protocol] = protocols.get(protocol, 0) + 1
 
-        peer = packet.get("dst") if packet.get("src") == ip else packet.get("src")
+        is_out = ip_matches_packet(ip, packet.get("src"))
+        is_in = ip_matches_packet(ip, packet.get("dst"))
+
+        try:
+            pkt_len = int(packet.get("length", 0))
+        except (ValueError, TypeError):
+            pkt_len = 0
+        total_bytes += pkt_len
+
+        if is_out:
+            outbound_packets += 1
+            outbound_bytes += pkt_len
+            peer = packet.get("dst")
+        elif is_in:
+            inbound_packets += 1
+            inbound_bytes += pkt_len
+            peer = packet.get("src")
+        else:
+            peer = None
+
         if peer:
             peers[peer] = peers.get(peer, 0) + 1
+            flows.add(f"{peer}|{protocol}")
+
+        # Extract domain evidence
+        dq = packet.get("dns_query", "").strip()
+        if dq and dq.lower() != "none":
+            dns_queries.add(dq)
+
+        hh = packet.get("http_host", "").strip()
+        if hh:
+            http_hosts.add(hh)
+
+        ts = packet.get("tls_sni", "").strip()
+        if ts:
+            tls_snis.add(ts)
 
     top_peers = sorted(
         [{"ip": peer, "packets": count} for peer, count in peers.items()],
         key=lambda x: x["packets"],
         reverse=True,
     )
+
+    observed_domains = sorted(list(dns_queries | http_hosts | tls_snis))
 
     mac_address = select_best_mac_for_ip(ip, packets)
     device_name = select_best_device_name_from_packets(packets)
@@ -79,31 +132,37 @@ def build_host_profile(ip: str) -> dict:
     score = 0
     reasons = []
 
-    if "SSL" in protocols:
-        score += 30
-        reasons.append("Legacy SSL")
+    if "SSL" in protocols or "TLS" in protocols:
+        score += 15
+        reasons.append("TLS/SSL Traffic")
 
     if any(p in protocols for p in {"FTP", "TELNET", "SMB", "HTTP"}):
         score += 20
-        reasons.append("IOC Finding")
+        reasons.append("Plaintext/Insecure Protocols")
 
     if "DNS" in protocols and packet_count > 50:
         score += 15
-        reasons.append("Alert Activity")
+        reasons.append("High DNS Activity")
 
     if packet_count > 100:
         score += 10
         reasons.append("High Traffic Volume")
 
-    if any(p in protocols for p in {"TELNET", "FTP"}):
-        score += 20
-        reasons.append("Threat Intel Risk")
-
     return {
         "ip": ip,
         "packet_count": packet_count,
+        "inbound_packets": inbound_packets,
+        "outbound_packets": outbound_packets,
+        "total_bytes": total_bytes,
+        "inbound_bytes": inbound_bytes,
+        "outbound_bytes": outbound_bytes,
         "protocols": protocols,
+        "flows_count": len(flows),
         "top_peers": top_peers,
+        "dns_queries": sorted(list(dns_queries)),
+        "http_hosts": sorted(list(http_hosts)),
+        "tls_snis": sorted(list(tls_snis)),
+        "observed_domains": observed_domains,
         "risk_score": score,
         "risk_reasons": reasons,
         "packets": packets,
@@ -187,7 +246,9 @@ def build_host_mitre(ip: str, profile: dict) -> dict:
     iocs = []
     alerts = build_host_alerts(profile)
     correlations = []
-    return mitre_service.map_to_mitre(iocs, alerts, correlations)
+    if hasattr(mitre_service, "map_to_mitre"):
+        return mitre_service.map_to_mitre(iocs, alerts, correlations)
+    return {"techniques": [], "tactics": [], "mappings": []}
 
 
 # ---------------------------------------------------------------------------

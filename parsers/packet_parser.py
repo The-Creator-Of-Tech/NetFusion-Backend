@@ -5,18 +5,36 @@ from typing import List
 from identity.resolver import resolve_device_identity
 from utils.network import lookup_mac_vendor, normalize_mac
 
-PACKET_FIELD_COUNT = 14
+PACKET_FIELD_COUNT = 17
+
+
+def ip_matches_packet(target_ip: str, packet_ip_field: str) -> bool:
+    """Return True if target_ip matches packet_ip_field exactly or within comma-separated list."""
+    if not target_ip or not packet_ip_field:
+        return False
+    target_clean = str(target_ip).strip()
+    field_clean = str(packet_ip_field).strip()
+    if not target_clean or not field_clean:
+        return False
+    if field_clean == target_clean:
+        return True
+    parts = [p.strip() for p in field_clean.split(",")]
+    return target_clean in parts
 
 
 def parse_packet_row(parts: List[str]) -> dict:
     while len(parts) < PACKET_FIELD_COUNT:
         parts.append("")
 
+    src_ip = parts[2].strip() or (parts[14].strip() if len(parts) > 14 else "")
+    dst_ip = parts[3].strip() or (parts[15].strip() if len(parts) > 15 else "")
+    tls_sni = parts[16].strip() if len(parts) > 16 else ""
+
     return {
         "number": parts[0],
         "time": parts[1],
-        "src": parts[2],
-        "dst": parts[3],
+        "src": src_ip,
+        "dst": dst_ip,
         "mac_src": parts[4],
         "mac_dst": parts[5],
         "protocol": parts[6],
@@ -31,6 +49,7 @@ def parse_packet_row(parts: List[str]) -> dict:
         "llmnr_name": "",
         "dns_ptr": "",
         "dns_query": parts[13],
+        "tls_sni": tls_sni,
     }
 
 

@@ -22,6 +22,9 @@ PACKET_LIST_FIELDS = [
     "nbns.name",
     "nbns.netbios_name",
     "dns.qry.name",
+    "ipv6.src",
+    "ipv6.dst",
+    "tls.handshake.extensions_server_name",
 ]
 
 CONVERSATION_FIELDS = [
